@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="wallet_widget_label">Wallet balance</string>
+  <string name="wallet_widget_description">Your balance with quick add buttons</string>
+  <string name="tile_label">Add transaction</string>
+  <string name="shortcut_expense">Add expense</string>
+  <string name="shortcut_income">Add income</string>
+  <string name="shortcut_transfer">Transfer</string>
+  <string name="listener_label">Finance Tracker payment detection</string>
+</resources>

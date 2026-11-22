@@ -1,0 +1,80 @@
+import { RefreshControl, Pressable, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Body, Button, Card, Empty, ErrorText, IconButton, Label, Loading, Money, Screen, Title } from '../../components/ui';
+import { useRecurring } from '../../lib/queries';
+import { useAuth } from '../../lib/auth';
+import { FREQUENCY_LABELS, formatPHP, friendlyDate } from '../../lib/format';
+import { space } from '../../theme';
+
+export default function Plan() {
+  const router = useRouter();
+  const { isOwner } = useAuth();
+  const q = useRecurring();
+  const items = q.data ?? [];
+  const active = items.filter((i) => i.active);
+  const income = active.filter((i) => i.kind === 'income');
+  const bills = active.filter((i) => i.kind === 'expense');
+  const sum = (list) => list.reduce((n, i) => n + i.monthly_equivalent_cents, 0);
+  const net = sum(income) - sum(bills);
+
+  const Row = ({ item }) => (
+    <Pressable
+      onPress={() => router.push(`/recurring/${item.id}`)}
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: space.sm, opacity: !item.active ? 0.45 : pressed ? 0.6 : 1 })}
+    >
+      <View style={{ flex: 1 }}>
+        <Body style={{ fontWeight: '600' }}>{item.name}</Body>
+        <Body muted style={{ fontSize: 13 }}>
+          {FREQUENCY_LABELS[item.frequency]}
+          {item.next_date ? ` · next ${friendlyDate(item.next_date)}` : ''}
+          {!item.active ? ' · paused' : ''}
+        </Body>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Money cents={item.amount_cents} kind={item.kind} />
+        {item.frequency !== 'monthly' && <Body muted style={{ fontSize: 12 }}>≈ {formatPHP(item.monthly_equivalent_cents)}/mo</Body>}
+      </View>
+    </Pressable>
+  );
+
+  return (
+    <Screen refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={q.refetch} />}>
+      <Title right={isOwner && <IconButton icon="add-circle" label="Add income or bill" onPress={() => router.push('/recurring/new')} />}>Income & Bills</Title>
+      {q.isPending && <Loading />}
+      <ErrorText error={q.error} />
+
+      {q.data && (
+        <Card>
+          <Label>Every month (estimated)</Label>
+          <View style={{ flexDirection: 'row', gap: space.md }}>
+            <View style={{ flex: 1 }}><Body muted>Income</Body><Money cents={sum(income)} kind="income" size={18} /></View>
+            <View style={{ flex: 1 }}><Body muted>Bills</Body><Money cents={sum(bills)} kind="expense" size={18} /></View>
+            <View style={{ flex: 1 }}><Body muted>Can save</Body><Money cents={net} size={18} /></View>
+          </View>
+        </Card>
+      )}
+
+      {q.data && items.length === 0 && (
+        <Empty
+          icon="calendar-outline"
+          title="Add your salary and regular bills"
+          hint="e.g. Salary twice a month, rent, Meralco, internet, Netflix. You'll see what you can save each month."
+          action={isOwner && <Button title="Add" icon="add" onPress={() => router.push('/recurring/new')} />}
+        />
+      )}
+
+      {items.some((i) => i.kind === 'income') && (
+        <Card>
+          <Label>Income</Label>
+          {items.filter((i) => i.kind === 'income').map((i) => <Row key={i.id} item={i} />)}
+        </Card>
+      )}
+      {items.some((i) => i.kind === 'expense') && (
+        <Card>
+          <Label>Bills & subscriptions</Label>
+          {items.filter((i) => i.kind === 'expense').map((i) => <Row key={i.id} item={i} />)}
+        </Card>
+      )}
+    </Screen>
+  );
+}

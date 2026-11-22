@@ -1,0 +1,27 @@
+{
+  "name": "finance-tracker",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "mobile"
+  ],
+  "scripts": {
+    "build": "npm run build -w server",
+    "dev": "npm run dev -w server",
+    "mobile": "npm start -w mobile",
+    "migrate": "npm run migrate -w server",
+    "test": "npm test -w shared && npm test -w server"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neon/config": "^1.14.6",
+    "@neon/env": "^2.1.9"
+  },
+  "overrides": {
+    "react": "19.3.0"
+  }
+}

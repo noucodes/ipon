@@ -1,0 +1,42 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Needed to show reminders and "Log ₱500 expense?" suggestions on Android 13+ -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <!-- Detects GCash / Maya / bank alerts (only after the user grants Notification access) -->
+    <service
+      android:name="expo.modules.walletshortcuts.MoneyNotificationListener"
+      android:exported="true"
+      android:label="@string/listener_label"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+
+    <!-- Home-screen widget: balance + quick add buttons -->
+    <receiver
+      android:name="expo.modules.walletshortcuts.WalletWidgetProvider"
+      android:exported="false"
+      android:label="@string/wallet_widget_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/wallet_widget_info" />
+    </receiver>
+
+    <!-- Quick Settings tile (pull-down panel): opens quick add -->
+    <service
+      android:name="expo.modules.walletshortcuts.AddTileService"
+      android:exported="true"
+      android:icon="@drawable/ic_tile_add"
+      android:label="@string/tile_label"
+      android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+      <intent-filter>
+        <action android:name="android.service.quicksettings.action.QS_TILE" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>
