@@ -5,14 +5,16 @@
   "workspaces": [
     "shared",
     "server",
-    "mobile"
+    "mobile",
+    "web"
   ],
   "scripts": {
     "build": "npm run build -w server",
     "dev": "npm run dev -w server",
     "mobile": "npm start -w mobile",
     "migrate": "npm run migrate -w server",
-    "test": "npm test -w shared && npm test -w server"
+    "test": "npm test -w shared && npm test -w server",
+    "web": "npm run dev -w web"
   },
   "engines": {
     "node": ">=20"
@@ -22,6 +24,7 @@
     "@neon/env": "^2.1.9"
   },
   "overrides": {
-    "react": "19.3.0"
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }

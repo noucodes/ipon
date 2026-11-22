@@ -132,3 +132,4 @@ export const DEFAULT_FEE_PRESETS = [
 export { parseMoneyNotification, detectSource, KNOWN_SOURCES, LENDERS } from './detect.js';
 export { occurrences, nextCustomDate, describeDays } from './schedule.js';
 export { INCOME_TYPES, LINE_KINDS, PRESET_LINES, computeNet, payslipTotals, cutoffOf } from './payslip.js';
+export { loanProgress } from './loans.js';
