@@ -257,9 +257,16 @@ test("partner's summary excludes private accounts and their bills", async () => 
   assert.equal(theirs.body.recurring.monthly_expenses_cents, 1_200_000);
 });
 
-test('net worth history ends at current net worth', async () => {
+test('net worth history ends at current net worth, and starts when tracking began', async () => {
   const s = await api('GET', '/summary', { token: me });
   const h = await api('GET', '/summary/net-worth?months=6', { token: me });
-  assert.equal(h.body.points.length, 6);
+  // Everything here was created this month, so there are no fake "₱0" months before it
+  assert.equal(h.body.points.length, 1);
   assert.equal(h.body.points.at(-1).net_worth_cents, s.body.balances.net_worth_cents);
+
+  // A transaction dated 3 months ago extends the history back to that month
+  const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 3);
+  await tx(me, { type: 'expense', amount_cents: 100, account_id: acct.BDO, occurred_on: d.toISOString().slice(0, 10) });
+  const h2 = await api('GET', '/summary/net-worth?months=6', { token: me });
+  assert.equal(h2.body.points.length, 4);
 });

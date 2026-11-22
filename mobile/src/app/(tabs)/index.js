@@ -135,11 +135,18 @@ export default function Home() {
               </Card>
               <Card style={{ flex: 1, padding: space.md }}>
                 <Text style={{ fontWeight: '800', color: t.text }}>Net worth</Text>
-                <Body muted style={{ fontSize: 12 }}>Last 6 months</Body>
-                <Sparkline values={(history.data ?? []).map((p) => p.net_worth_cents)} color={t.accent} height={64} />
-                <Text style={{ fontWeight: '800', color: t.text, fontSize: 15 }}>
-                  {hidden ? '••••' : formatPHP(s.month_flow.income_cents)}
-                  <Text style={{ fontWeight: '500', color: t.muted, fontSize: 12 }}> income this month</Text>
+                {(history.data?.length ?? 0) >= 2 ? (
+                  <>
+                    <Body muted style={{ fontSize: 12 }}>Since {monthShort(history.data[0].month)}</Body>
+                    <Sparkline values={history.data.map((p) => p.net_worth_cents)} color={t.accent} height={64} />
+                  </>
+                ) : (
+                  // Only one month tracked so far: a "trend" line would be meaningless
+                  <Body muted style={{ fontSize: 12, marginVertical: 8 }}>Your trend line appears after your first full month of tracking.</Body>
+                )}
+                <Text style={{ fontWeight: '800', fontSize: 15, color: monthNet >= 0 ? t.income : t.expense }}>
+                  {hidden ? '••••' : `${monthNet >= 0 ? '+' : '−'}${formatPHP(Math.abs(monthNet))}`}
+                  <Text style={{ fontWeight: '500', color: t.muted, fontSize: 12 }}> this month</Text>
                 </Text>
               </Card>
             </View>
@@ -163,20 +170,19 @@ export default function Home() {
               </Card>
             )}
 
-            {/* Recent activity */}
-            <View style={{ gap: space.sm }}>
-              <Pressable onPress={() => router.push('/activity')} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={{ flex: 1, fontWeight: '800', fontSize: 17, color: t.text }}>Recent activity</Text>
-                <Ionicons name="arrow-forward" size={20} color={t.text} />
-              </Pressable>
+            {/* Recent activity: last 4, compact, one card */}
+            <Card style={{ paddingVertical: space.md, gap: 0 }}>
+              <SectionHeader title="Recent activity" action="See all" onPress={() => router.push('/activity')} />
               {s.recent_transactions.length === 0 ? (
-                <Card><Empty title="No transactions yet" hint="Tap Expense or Income above, or double-tap anywhere." /></Card>
+                <Empty title="No transactions yet" hint="Tap Expense or Income above, or double-tap anywhere." />
               ) : (
-                s.recent_transactions.slice(0, 6).map((tx) => (
-                  <TransactionRow key={tx.id} tx={tx} card onPress={() => router.push(`/transaction/${tx.id}`)} />
+                s.recent_transactions.slice(0, 4).map((tx, i) => (
+                  <View key={tx.id} style={i > 0 ? { borderTopWidth: 1, borderTopColor: t.border } : null}>
+                    <TransactionRow tx={tx} compact onPress={() => router.push(`/transaction/${tx.id}`)} />
+                  </View>
                 ))
               )}
-            </View>
+            </Card>
 
             {/* This month's spending */}
             {s.month_flow.spending_by_category.length > 0 && (
@@ -196,16 +202,7 @@ export default function Home() {
               </Card>
             )}
 
-            {s.recurring.upcoming.length > 0 && (
-              <Card>
-                <Label>Coming up (30 days)</Label>
-                {s.recurring.upcoming.map((r) => (
-                  <NameAmount key={r.id} name={<>{r.name} <Body muted>· {friendlyDate(r.next_date)}</Body></>}>
-                    <Money cents={r.expected_cents ?? r.amount_cents} kind={r.kind} signed />
-                  </NameAmount>
-                ))}
-              </Card>
-            )}
+            {s.recurring.upcoming.length > 0 && <ComingUp items={s.recurring.upcoming} hidden={hidden} onSeeAll={() => router.push('/plan')} />}
             <Body muted style={{ textAlign: 'center', fontSize: 12 }}>Tip: double-tap anywhere to add a transaction</Body>
           </>
         )}
@@ -229,5 +226,57 @@ function ActionPill({ icon, label, onPress }) {
         <Ionicons name={icon} size={14} color={t.primaryText} />
       </View>
     </Pressable>
+  );
+}
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthShort = (ym) => `${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+
+function SectionHeader({ title, action, onPress }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+      <Text style={{ flex: 1, fontWeight: '800', fontSize: 16, color: t.text }}>{title}</Text>
+      {action && <Text style={{ color: t.muted, fontWeight: '600', fontSize: 13 }}>{action} ›</Text>}
+    </Pressable>
+  );
+}
+
+/** Next few bills / paydays, grouped by date, one line each. */
+function ComingUp({ items, hidden, onSeeAll }) {
+  const t = useTheme();
+  const SHOW = 5;
+  const shown = items.slice(0, SHOW);
+  const bills = items.filter((r) => r.kind === 'expense').reduce((n, r) => n + (r.expected_cents ?? r.amount_cents), 0);
+  const income = items.filter((r) => r.kind === 'income').reduce((n, r) => n + (r.expected_cents ?? r.amount_cents), 0);
+  const groups = [];
+  for (const r of shown) {
+    const last = groups.at(-1);
+    if (last && last.date === r.next_date) last.items.push(r);
+    else groups.push({ date: r.next_date, items: [r] });
+  }
+  // "BillEase payment" -> "BillEase": the section already says these are payments
+  const label = (r) => r.name.replace(/\s+payment$/i, '');
+
+  return (
+    <Card style={{ paddingVertical: space.md, gap: 6 }}>
+      <SectionHeader title="Coming up" action={items.length > SHOW ? `See all ${items.length}` : 'See all'} onPress={onSeeAll} />
+      <Text style={{ color: t.muted, fontSize: 12 }}>
+        Next 30 days: {hidden ? '••••' : formatPHP(bills)} to pay{income ? ` · ${hidden ? '••••' : formatPHP(income)} coming in` : ''}
+      </Text>
+      {groups.map((g) => (
+        <View key={g.date} style={{ gap: 2, marginTop: 4 }}>
+          <Text style={{ color: t.muted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>{friendlyDate(g.date)}</Text>
+          {g.items.map((r) => (
+            <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 3 }}>
+              <Text style={{ flex: 1, color: t.text, fontSize: 15 }} numberOfLines={1}>{label(r)}</Text>
+              {hidden
+                ? <Text style={{ color: t.muted, fontWeight: '700' }}>••••</Text>
+                : <Money cents={r.expected_cents ?? r.amount_cents} kind={r.kind} signed size={14} />}
+            </View>
+          ))}
+        </View>
+      ))}
+    </Card>
   );
 }

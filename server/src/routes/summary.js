@@ -144,9 +144,17 @@ export function summaryRouter({ pool, config }) {
 
     const { rows } = await pool.query(
       `WITH ${SCOPE_CTE},
+       -- Tracking starts at the first account or transaction; months before that aren't "₱0", they're unknown.
+       tracking AS (
+         SELECT date_trunc('month', LEAST(
+                  (SELECT min(s.created_at AT TIME ZONE 'Asia/Manila')::date FROM scope s),
+                  (SELECT min(e.occurred_on) FROM transaction_effects e JOIN scope s ON s.id = e.account_id)
+                ))::date AS start
+       ),
        months AS (
          SELECT (date_trunc('month', $3::date) - make_interval(months => g))::date AS start
            FROM generate_series(0, $4 - 1) AS g
+          WHERE (date_trunc('month', $3::date) - make_interval(months => g))::date >= COALESCE((SELECT start FROM tracking), date_trunc('month', $3::date)::date)
        )
        SELECT to_char(m.start, 'YYYY-MM') AS month,
               ( COALESCE((SELECT SUM(s.opening_balance_cents) FROM scope s
