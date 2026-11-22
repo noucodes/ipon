@@ -10,7 +10,7 @@ import { Body, Button, Card, Chip, ChipRow, ErrorText, Field, Ionicons, Label, S
 import { BigAmount } from './BigAmount';
 import { TransactionRow } from './TransactionRow';
 import { useAuth } from '../lib/auth';
-import { useCategories, useMoneyMutation, useTransactions, api } from '../lib/queries';
+import { useAccounts, useCategories, useMoneyMutation, useTransactions, refreshMoney, api } from '../lib/queries';
 import { centsToInput, formatPHP, friendlyDate } from '../lib/format';
 import { useTheme, space, radius } from '../theme';
 
@@ -19,6 +19,33 @@ export function PersonScreen({ person }) {
 }
 
 function PersonDetail({ person }) {
+  const [merging, setMerging] = useState(false);
+  const others = (useAccounts({ includeArchived: true }).data ?? []).filter((a) => a.type === 'person' && a.id !== person.id);
+  const mergeRouter = useRouter();
+
+  function confirmMerge(into) {
+    Alert.alert(
+      `Merge into ${into.name}?`,
+      `${person.name}'s history and balance (${formatPHP(Math.abs(person.balance_cents))}) move into ${into.name}, and this entry is removed. This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Merge',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.post(`/accounts/${person.id}/merge`, { into_id: into.id });
+              await refreshMoney();
+              mergeRouter.replace(`/account/${into.id}`);
+            } catch (err) {
+              Alert.alert('Could not merge', err.message);
+            }
+          },
+        },
+      ],
+    );
+  }
+
   const t = useTheme();
   const router = useRouter();
   const { isOwner } = useAuth();
@@ -128,6 +155,20 @@ function PersonDetail({ person }) {
             <Button title="Write off (won't be paid back)" variant="secondary" icon="close-circle-outline" onPress={confirmWriteOff} loading={writeOff.isPending} />
           )}
           <Button title="Edit person" variant="secondary" icon="create-outline" onPress={() => setEditing(true)} />
+          {others.length > 0 && (
+            <Button title={merging ? 'Cancel merge' : 'Merge with…'} variant="secondary" icon="git-merge-outline" onPress={() => setMerging((m) => !m)} />
+          )}
+          {merging && (
+            <Card>
+              <Label>Merge {person.name} into</Label>
+              <Body muted style={{ fontSize: 13 }}>For duplicates of the same person. Their history and balance move into the one you pick.</Body>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+                {others.map((o) => (
+                  <Chip key={o.id} icon="person-outline" label={`${o.name} · ${formatPHP(Math.abs(o.balance_cents))}`} onPress={() => confirmMerge(o)} />
+                ))}
+              </View>
+            </Card>
+          )}
         </View>
       )}
 
@@ -192,6 +233,13 @@ function PersonForm({ person, onDone }) {
       if (onDone) onDone();
       else router.back();
     } catch (err) {
+      if (err.code === 'person_exists' && err.accountId) {
+        Alert.alert('Already in People', `${name.trim()} is already on your list. Open them instead?`, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open', onPress: () => router.replace(`/account/${err.accountId}`) },
+        ]);
+        return;
+      }
       setError(err);
     }
   }

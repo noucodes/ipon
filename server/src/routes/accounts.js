@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { ACCOUNT_TYPES } from '@ft/shared';
-import { conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { withTransaction } from '../db.js';
 import { parseId, signedCents, dateStr } from '../lib/validators.js';
 import { visibleSql, isOwner, requireOwner } from '../lib/access.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -70,6 +71,16 @@ export function accountsRouter({ pool, config }) {
 
   router.post('/', requireOwner, async (req, res) => {
     const body = createSchema.parse(req.body);
+    // One entry per person, so their utang isn't split across duplicates
+    if (body.type === 'person') {
+      const dup = await pool.query(
+        `SELECT id FROM accounts WHERE household_id = $1 AND type = 'person' AND NOT archived AND lower(name) = lower($2)`,
+        [req.user.household_id, body.name],
+      );
+      if (dup.rowCount) {
+        return res.status(409).json({ error: 'person_exists', message: `You already have ${body.name} in People`, account_id: dup.rows[0].id });
+      }
+    }
     const { rows } = await pool.query(
       `INSERT INTO accounts (household_id, name, type, opening_balance_cents, is_private, sort_order, due_date, note)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
@@ -91,6 +102,39 @@ export function accountsRouter({ pool, config }) {
         next.due_date, next.note || null, accountId, req.user.household_id],
     );
     res.json({ account: serialize(req.user, await fetchAccount(pool, req.user, accountId)) });
+  });
+
+  // Merge a duplicate person into another: all their history moves over and balances add up.
+  router.post('/:id/merge', requireOwner, async (req, res) => {
+    const sourceId = parseId(req.params.id);
+    const { into_id: intoId } = z.object({ into_id: z.uuid() }).parse(req.body);
+    if (sourceId === intoId) throw badRequest('Pick a different person to merge into', 'same_person');
+
+    await withTransaction(pool, async (db) => {
+      const { rows } = await db.query(
+        `SELECT id, type, opening_balance_cents FROM accounts WHERE household_id = $1 AND id = ANY($2::uuid[]) FOR UPDATE`,
+        [req.user.household_id, [sourceId, intoId]],
+      );
+      const src = rows.find((r) => r.id === sourceId);
+      const into = rows.find((r) => r.id === intoId);
+      if (!src || !into) throw notFound('Person not found');
+      if (src.type !== 'person' || into.type !== 'person') throw badRequest('Only people can be merged', 'not_person');
+
+      // Transfers between the two would become "from X to X": they cancel out, so drop them.
+      await db.query(
+        `DELETE FROM transactions WHERE (account_id = $1 AND to_account_id = $2) OR (account_id = $2 AND to_account_id = $1)`,
+        [sourceId, intoId],
+      );
+      await db.query(`UPDATE transactions SET account_id = $2, updated_at = now() WHERE account_id = $1`, [sourceId, intoId]);
+      await db.query(`UPDATE transactions SET to_account_id = $2, updated_at = now() WHERE to_account_id = $1`, [sourceId, intoId]);
+      await db.query(`UPDATE recurring_items SET account_id = $2 WHERE account_id = $1`, [sourceId, intoId]);
+      await db.query(
+        `UPDATE accounts SET opening_balance_cents = opening_balance_cents + $2, updated_at = now() WHERE id = $1`,
+        [intoId, src.opening_balance_cents],
+      );
+      await db.query(`DELETE FROM accounts WHERE id = $1`, [sourceId]);
+    });
+    res.json({ account: serialize(req.user, await fetchAccount(pool, req.user, intoId)) });
   });
 
   // Only accounts with no transactions can be deleted; otherwise archive them.

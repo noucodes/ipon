@@ -14,7 +14,7 @@ import { Keypad, useAmountInput } from './Keypad';
 import { SwipeTrack } from './SwipeTrack';
 import { SwipeCard } from './SwipeCard';
 import { BigAmount } from './BigAmount';
-import { AccountAvatar, TYPE_COLORS } from './AccountAvatar';
+import { TYPE_COLORS } from './AccountAvatar';
 import { useAccounts, useCategories, useFeePresets, useFeeSuggestion, refreshMoney, api } from '../lib/queries';
 import { enqueue, isRetryable, updateQueued } from '../lib/outbox';
 import { centsToInput, friendlyDate, ACCOUNT_TYPE_ICONS } from '../lib/format';
@@ -49,7 +49,7 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
   const [editingNote, setEditingNote] = useState(false);
   const [date, setDate] = useState(todayInManila());
   const [showDate, setShowDate] = useState(false);
-  const [accountSheet, setAccountSheet] = useState(false);
+  const [sheet, setSheet] = useState(null); // 'log' | 'from' | 'to' account picker
   const [feeSheet, setFeeSheet] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -196,7 +196,7 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
       {/* Who / where */}
       {mode === 'log' ? (
         <Pressable
-          onPress={() => setAccountSheet(true)}
+          onPress={() => setSheet('log')}
           style={({ pressed }) => ({ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: t.chip, opacity: pressed ? 0.7 : 1 })}
           accessibilityLabel={`Account: ${account?.name}. Tap to change`}
         >
@@ -206,8 +206,16 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
         </Pressable>
       ) : (
         <View style={{ gap: space.sm }}>
-          <AccountRow label="From" accounts={accounts} selected={accountId} onSelect={(id) => { setAccountId(id); if (id === toAccountId) setToAccountId(null); setFee(null); }} />
-          <AccountRow label="To" accounts={accounts} selected={toAccountId} disabledId={accountId} onSelect={(id) => { setToAccountId(id); setFee(null); }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+            <AccountPicker label="From" account={account} onPress={() => setSheet('from')} />
+            <IconButton
+              icon="swap-horizontal"
+              label="Swap from and to"
+              color={t.text}
+              onPress={() => { if (toAccountId) { const f = accountId; setAccountId(toAccountId); setToAccountId(f); setFee(null); } }}
+            />
+            <AccountPicker label="To" account={toAccount} placeholder="Choose" onPress={() => setSheet('to')} />
+          </View>
         </View>
       )}
 
@@ -308,24 +316,27 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
         />
       )}
 
-      <AccountSheet visible={accountSheet} accounts={moneyAccounts} selected={accountId} onClose={() => setAccountSheet(false)} onSelect={(id) => { setAccountId(id); setAccountSheet(false); }} />
+      <AccountSheet
+        visible={!!sheet}
+        title={sheet === 'from' ? 'From which account?' : sheet === 'to' ? 'To which account?' : 'Which account?'}
+        accounts={sheet === 'log' ? moneyAccounts : accounts}
+        selected={sheet === 'to' ? toAccountId : accountId}
+        disabledId={sheet === 'to' ? accountId : null}
+        onClose={() => setSheet(null)}
+        onSelect={(id) => {
+          if (sheet === 'to') setToAccountId(id);
+          else {
+            setAccountId(id);
+            if (id === toAccountId) setToAccountId(null);
+          }
+          setFee(null);
+          setSheet(null);
+        }}
+      />
       <FeeSheet visible={feeSheet} value={effectiveFee} presets={presets} onClose={() => setFeeSheet(false)} onChange={(v) => { setFee(v); setFeeSheet(false); }} />
 
       {result && <Success result={result} account={account} toAccount={toAccount} fee={effectiveFee} onClose={onClose} onAnother={addAnother} onPickCategory={pickCategory} onPayslip={isOwner ? openPayslip : null} />}
     </SafeAreaView>
-  );
-}
-
-function AccountRow({ label, accounts, selected, onSelect, disabledId }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Label>{label}</Label>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4 }}>
-        {accounts.map((a) => (
-          <AccountAvatar key={a.id} account={a} size={46} selected={selected === a.id} dimmed={a.id === disabledId} onPress={() => a.id !== disabledId && onSelect(a.id)} />
-        ))}
-      </ScrollView>
-    </View>
   );
 }
 
@@ -343,14 +354,78 @@ function Sheet({ visible, onClose, title, children }) {
   );
 }
 
-function AccountSheet({ visible, accounts, selected, onSelect, onClose }) {
+/** Compact "From / To" picker: label, account name and balance in one tappable pill. */
+function AccountPicker({ label, account, placeholder = 'Choose', onPress }) {
+  const t = useTheme();
+  const color = account ? TYPE_COLORS[account.type] ?? t.primary : t.muted;
   return (
-    <Sheet visible={visible} onClose={onClose} title="Which account?">
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-        {accounts.map((a) => (
-          <AccountAvatar key={a.id} account={a} selected={selected === a.id} onPress={() => onSelect(a.id)} />
-        ))}
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${account?.name ?? 'not chosen'}. Tap to change`}
+      style={({ pressed }) => ({
+        flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12,
+        borderRadius: radius.md, backgroundColor: t.card, borderWidth: 1, borderColor: account ? t.border : t.primary,
+        opacity: pressed ? 0.7 : 1,
+      })}
+    >
+      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: t.chip, alignItems: 'center', justifyContent: 'center' }}>
+        <Ionicons name={account ? (account.type === 'person' ? 'person-outline' : ACCOUNT_TYPE_ICONS[account.type]) : 'add'} size={18} color={color} />
       </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: t.muted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
+        <Text style={{ color: account ? t.text : t.primary, fontWeight: '700', fontSize: 15 }} numberOfLines={1}>{account?.name ?? placeholder}</Text>
+      </View>
+      <Ionicons name="chevron-down" size={16} color={t.muted} />
+    </Pressable>
+  );
+}
+
+const SHEET_GROUPS = [
+  { title: 'Your money', match: (a) => ['bank', 'digital_bank', 'cash', 'savings'].includes(a.type) },
+  { title: 'Cards & loans', match: (a) => a.type === 'credit_card' },
+  { title: 'People', match: (a) => a.type === 'person' },
+];
+
+/** Account list grouped into Your money / Cards & loans / People. */
+function AccountSheet({ visible, title, accounts, selected, disabledId, onSelect, onClose }) {
+  const t = useTheme();
+  return (
+    <Sheet visible={visible} onClose={onClose} title={title}>
+      <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ gap: space.md }}>
+        {SHEET_GROUPS.map((g) => {
+          const list = accounts.filter(g.match);
+          if (!list.length) return null;
+          return (
+            <View key={g.title} style={{ gap: 4 }}>
+              <Label>{g.title}</Label>
+              {list.map((a) => {
+                const disabled = a.id === disabledId;
+                const isSel = a.id === selected;
+                return (
+                  <Pressable
+                    key={a.id}
+                    disabled={disabled}
+                    onPress={() => onSelect(a.id)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 10,
+                      borderRadius: radius.md, backgroundColor: isSel ? t.primarySoft : pressed ? t.chip : 'transparent',
+                      opacity: disabled ? 0.35 : 1,
+                    })}
+                  >
+                    <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: t.chip, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name={a.type === 'person' ? 'person-outline' : ACCOUNT_TYPE_ICONS[a.type]} size={18} color={TYPE_COLORS[a.type] ?? t.primary} />
+                    </View>
+                    <Text style={{ flex: 1, color: t.text, fontSize: 15, fontWeight: isSel ? '800' : '600' }} numberOfLines={1}>{a.name}</Text>
+                    <Text style={{ color: a.balance_cents < 0 ? t.expense : t.muted, fontVariant: ['tabular-nums'] }}>{formatPHP(a.balance_cents)}</Text>
+                    {isSel && <Ionicons name="checkmark" size={18} color={t.text} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          );
+        })}
+      </ScrollView>
     </Sheet>
   );
 }

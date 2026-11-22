@@ -89,6 +89,29 @@ test('writing off what Juan still owes', async () => {
   assert.equal(s.month_flow.spending_by_category.find((c) => c.name === 'Written off').total_cents, 300_000);
 });
 
+test('no duplicate people; merge combines balances and history', async () => {
+  const dup = await api('POST', '/accounts', { token: me, body: { name: 'juan', type: 'person' } }); // case-insensitive
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.error, 'person_exists');
+  assert.equal(dup.body.account_id, acct.Juan);
+
+  // An old duplicate (e.g. created before this check): archive-free path via a differently spelled name
+  const jter1 = (await api('POST', '/accounts', { token: me, body: { name: 'Jter', type: 'person', opening_balance_cents: 110_000 } })).body.account.id;
+  const jter2 = (await api('POST', '/accounts', { token: me, body: { name: 'Jter M.', type: 'person' } })).body.account.id;
+  await tx({ type: 'transfer', amount_cents: 333_200, account_id: acct.Wallet, to_account_id: jter2, note: 'loan' });
+  await tx({ type: 'transfer', amount_cents: 10_000, account_id: jter2, to_account_id: jter1 }); // between the two: cancels out
+
+  const r = await api('POST', `/accounts/${jter2}/merge`, { token: me, body: { into_id: jter1 } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.account.balance_cents, 110_000 + 333_200);
+  assert.equal((await api('GET', `/accounts/${jter2}`, { token: me })).status, 404);
+  const hist = (await api('GET', `/transactions?account_id=${jter1}`, { token: me })).body.transactions;
+  assert.ok(hist.some((t) => t.note === 'loan'));
+
+  assert.equal((await api('POST', `/accounts/${jter1}/merge`, { token: me, body: { into_id: acct.Wallet } })).body.error, 'not_person');
+  assert.equal((await api('POST', `/accounts/${jter1}/merge`, { token: partner, body: { into_id: acct.Juan } })).status, 403);
+});
+
 test('partner sees people except private ones, and can log a repayment', async () => {
   const names = (await api('GET', '/accounts', { token: partner })).body.accounts.map((a) => a.name);
   assert.ok(names.includes('Tita') && !names.includes('Secret friend'));

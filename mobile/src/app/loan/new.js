@@ -78,9 +78,21 @@ function LoanForm() {
   /** The chosen person, or a new one created from the typed name. */
   async function personIdOrCreate() {
     if (personId) return personId;
-    const { account } = await api.post('/accounts', { name: newPerson.trim(), type: 'person' });
-    setPersonId(account.id);
-    return account.id;
+    const name = newPerson.trim();
+    // Typed a name you already have? Use that person instead of making a duplicate.
+    const existing = people.find((p) => p.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setPersonId(existing.id);
+      return existing.id;
+    }
+    try {
+      const { account } = await api.post('/accounts', { name, type: 'person' });
+      setPersonId(account.id);
+      return account.id;
+    } catch (err) {
+      if (err.code === 'person_exists') return err.accountId; // e.g. created on another phone meanwhile
+      throw err;
+    }
   }
 
   async function onSave() {

@@ -48,7 +48,9 @@ export async function api(method, path, body, { timeoutMs = TIMEOUT_MS } = {}) {
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && authToken) onUnauthorized();
-    throw new ApiError(res.status, data?.error ?? 'error', data?.message ?? `Request failed (${res.status})`, data?.issues);
+    const error = new ApiError(res.status, data?.error ?? 'error', data?.message ?? `Request failed (${res.status})`, data?.issues);
+    if (data?.account_id) error.accountId = data.account_id; // e.g. person_exists points at the existing person
+    throw error;
   }
   return data;
 }
