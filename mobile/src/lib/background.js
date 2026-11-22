@@ -9,7 +9,7 @@ import * as SecureStore from 'expo-secure-store';
 import { formatPHP } from '@ft/shared';
 import { loadOutbox, syncOutbox, useOutbox } from './outbox';
 import { useAuth } from './auth';
-import { useHousehold, useRecurring, useSummary } from './queries';
+import { useAccounts, useHousehold, useRecurring, useSummary } from './queries';
 import { scheduleReminders } from './reminders';
 import { setShortcuts, updateWidget } from '../../modules/wallet-shortcuts';
 
@@ -38,6 +38,7 @@ function SignedInTasks() {
   const summary = useSummary();
   const household = useHousehold();
   const recurring = useRecurring();
+  const accounts = useAccounts();
   const ownerName = household.data?.members.find((m) => m.role === 'owner')?.display_name;
   const waiting = outbox.some((i) => !i.error);
 
@@ -63,8 +64,8 @@ function SignedInTasks() {
 
   // Keep bill/payday reminders in step with the income & bills list (if switched on).
   useEffect(() => {
-    if (signedIn && recurring.data) scheduleReminders(recurring.data).catch((e) => console.warn('reminders', e));
-  }, [signedIn, recurring.data]);
+    if (signedIn && recurring.data) scheduleReminders(recurring.data, accounts.data ?? []).catch((e) => console.warn('reminders', e));
+  }, [signedIn, recurring.data, accounts.data]);
 
   return null;
 }

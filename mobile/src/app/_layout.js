@@ -34,6 +34,12 @@ function RootStack() {
         <Stack.Screen name="transaction/[id]" options={modal('Transaction')} />
         <Stack.Screen name="account/[id]" options={modal('Account')} />
         <Stack.Screen name="recurring/[id]" options={modal('Income or bill')} />
+        <Stack.Screen name="loan/new" options={modal('Loan / pay later')} />
+        <Stack.Screen name="setup" options={modal('Set up your finances')} />
+        <Stack.Screen name="fees" options={modal('Transfer fee presets')} />
+        <Stack.Screen name="reset" options={modal('Reset my data')} />
+        <Stack.Screen name="payslip/new" options={modal('Log pay')} />
+        <Stack.Screen name="payslips" options={modal('Payslips & deductions')} />
       </Stack>
     </>
   );

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Ipon dark: near-black card, brand-green buttons -->
+  <color name="widget_bg">#141B18</color>
+  <color name="widget_text">#F2F5F3</color>
+  <color name="widget_muted">#99F2F5F3</color>
+  <color name="widget_button_bg">#0B6B4F</color>
+  <color name="widget_button_text">#FFFFFF</color>
+</resources>

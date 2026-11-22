@@ -1,12 +1,14 @@
 import { Pressable, Text, View } from 'react-native';
 import { Ionicons, Money } from './ui';
 import { useTheme, space, radius } from '../theme';
+import { useAuth } from '../lib/auth';
 
 const ICON = { expense: 'arrow-up', income: 'arrow-down', transfer: 'swap-horizontal' };
 
 /** Activity row: round icon, title, details, amount. `card` renders it as its own white rounded card. */
 export function TransactionRow({ tx, onPress, showAuthor = true, card = false }) {
   const t = useTheme();
+  const { user } = useAuth();
   const color = t[tx.type];
   const title = tx.type === 'transfer'
     ? `${tx.account_name} → ${tx.to_account_name}`
@@ -15,7 +17,8 @@ export function TransactionRow({ tx, onPress, showAuthor = true, card = false })
     tx.type === 'transfer' ? tx.note : tx.note ? tx.category_name : null,
     tx.type !== 'transfer' ? tx.account_name : null,
     tx.type === 'transfer' && tx.fee_cents > 0 ? `fee ₱${(tx.fee_cents / 100).toFixed(2)}` : null,
-    showAuthor ? tx.created_by_name : null,
+    // Only mention who logged it when it wasn't you (e.g. your partner)
+    showAuthor && tx.created_by && tx.created_by !== user?.id ? `by ${tx.created_by_name}` : null,
   ].filter(Boolean).join(' · ');
 
   return (

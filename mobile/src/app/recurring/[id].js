@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { Alert, Platform, ScrollView, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { FREQUENCIES, toCents, todayInManila } from '@ft/shared';
+import { FREQUENCIES, toCents, todayInManila, describeDays } from '@ft/shared';
 import { RequireAuth } from '../../components/RequireAuth';
 import { Body, Button, Chip, ChipRow, ErrorText, Field, Label, Loading, Segmented, ToggleRow } from '../../components/ui';
 import { useAccounts, useCategories, useMoneyMutation, useRecurring, api } from '../../lib/queries';
 import { FREQUENCY_LABELS, centsToInput, friendlyDate } from '../../lib/format';
-import { useTheme, space } from '../../theme';
+import { useTheme, space, radius } from '../../theme';
 
 // /recurring/new?kind=income  -> create
 // /recurring/<id>             -> edit
@@ -34,13 +34,14 @@ function RecurringForm({ item, defaultKind }) {
   const router = useRouter();
   const isNew = !item;
   const readOnly = !isNew && !item.can_edit;
-  const accounts = (useAccounts().data ?? []).filter((a) => !a.archived);
+  const accounts = (useAccounts().data ?? []).filter((a) => !a.archived && a.type !== 'person');
   const allCategories = useCategories().data ?? [];
 
   const [kind, setKind] = useState(item?.kind ?? defaultKind);
   const [name, setName] = useState(item?.name ?? '');
   const [amount, setAmount] = useState(centsToInput(item?.amount_cents));
   const [frequency, setFrequency] = useState(item?.frequency ?? 'monthly');
+  const [days, setDays] = useState(item?.days_of_month ?? []);
   const [accountId, setAccountId] = useState(item?.account_id ?? null);
   const [categoryId, setCategoryId] = useState(item?.category_id ?? null);
   const [nextDate, setNextDate] = useState(item?.next_date ?? null);
@@ -57,6 +58,7 @@ function RecurringForm({ item, defaultKind }) {
     const cents = toCents(amount || '0');
     if (!name.trim()) return setError({ message: 'Give it a name, e.g. Salary or Rent' });
     if (!cents || cents <= 0) return setError({ message: 'Enter an amount' });
+    if (frequency === 'custom_days' && !days.length) return setError({ message: 'Pick at least one day of the month' });
     const body = {
       kind,
       name: name.trim(),
@@ -64,7 +66,9 @@ function RecurringForm({ item, defaultKind }) {
       frequency,
       account_id: accountId,
       category_id: categoryId,
-      next_date: nextDate,
+      // custom days: next date is worked out from the days unless you picked one
+      next_date: frequency === 'custom_days' && !nextDate ? undefined : nextDate,
+      days_of_month: frequency === 'custom_days' ? days : null,
       active,
     };
     try {
@@ -103,6 +107,9 @@ function RecurringForm({ item, defaultKind }) {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
           {FREQUENCIES.map((f) => <Chip key={f} label={FREQUENCY_LABELS[f]} selected={frequency === f} onPress={() => setFrequency(f)} />)}
         </View>
+        {frequency === 'custom_days' && (
+          <DayPicker value={days} onChange={setDays} />
+        )}
       </View>
 
       <View style={{ gap: space.sm }}>
@@ -149,5 +156,39 @@ function RecurringForm({ item, defaultKind }) {
       <Button title={isNew ? 'Add' : 'Save changes'} onPress={onSave} loading={save.isPending} />
       {!isNew && <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} loading={remove.isPending} />}
     </>
+  );
+}
+
+
+/** Calendar-style picker for days of the month (31 = last day). */
+function DayPicker({ value, onChange }) {
+  const t = useTheme();
+  const toggle = (d) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d].sort((a, b) => a - b));
+  return (
+    <View style={{ gap: space.sm, backgroundColor: t.card, borderRadius: radius.lg, padding: space.md }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
+          const on = value.includes(d);
+          return (
+            <Pressable
+              key={d}
+              onPress={() => toggle(d)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={d === 31 ? 'Last day of the month' : `Day ${d}`}
+              style={{ width: `${100 / 7}%`, aspectRatio: 1, padding: 3 }}
+            >
+              <View style={{ flex: 1, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? t.primary : 'transparent' }}>
+                <Text style={{ color: on ? t.primaryText : t.text, fontWeight: on ? '800' : '500' }}>{d}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={{ color: t.muted, fontSize: 12 }}>
+        {value.length ? `Every ${describeDays(value)} of the month` : 'Tap the days it happens, e.g. 13 & 16 or 15 & 31'}
+        {value.includes(31) ? ' · 31 = last day in shorter months' : ''}
+      </Text>
+    </View>
   );
 }

@@ -7,8 +7,8 @@ import android.content.Context
 import android.widget.RemoteViews
 
 /**
- * Home-screen widget. Shows the last balance the app saved (it doesn't fetch on its own,
- * so it works offline and never needs your login), plus quick-add buttons.
+ * Quick-add bar widget: Expense / Income / Transfer buttons that open quick add.
+ * No balance is shown, so nothing private is visible on the home screen.
  */
 class WalletWidgetProvider : AppWidgetProvider() {
   override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
@@ -18,6 +18,7 @@ class WalletWidgetProvider : AppWidgetProvider() {
   companion object {
     const val PREFS = "wallet_widget"
 
+    /** Kept for compatibility with the app: stores the latest values and refreshes the widget. */
     fun save(context: Context, title: String, amount: String, subtitle: String) {
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
         .putString("title", title)
@@ -33,16 +34,11 @@ class WalletWidgetProvider : AppWidgetProvider() {
       for (id in ids) manager.updateAppWidget(id, buildViews(context))
     }
 
-    private fun buildViews(context: Context): RemoteViews {
-      val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-      return RemoteViews(context.packageName, R.layout.wallet_widget).apply {
-        setTextViewText(R.id.widget_title, prefs.getString("title", "Finance Tracker"))
-        setTextViewText(R.id.widget_amount, prefs.getString("amount", "Open the app"))
-        setTextViewText(R.id.widget_subtitle, prefs.getString("subtitle", ""))
-        setOnClickPendingIntent(R.id.widget_root, DeepLinks.openApp(context, 200))
+    private fun buildViews(context: Context): RemoteViews =
+      RemoteViews(context.packageName, R.layout.wallet_widget).apply {
         setOnClickPendingIntent(R.id.widget_add_expense, DeepLinks.pending(context, "add?type=expense", 201))
+        setOnClickPendingIntent(R.id.widget_add_income, DeepLinks.pending(context, "add?type=income", 203))
         setOnClickPendingIntent(R.id.widget_add_transfer, DeepLinks.pending(context, "add?type=transfer", 202))
       }
-    }
   }
 }

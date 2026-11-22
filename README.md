@@ -18,7 +18,7 @@ mobile/   Expo Android app             (steps 3–4)
 5. `npm run build` checks that every server file loads; `npm run dev` starts the API at http://localhost:4000
 6. `npm test` runs the tests against an in-memory Postgres; no Neon needed.
 
-Env files load in this order (later ones win): `.env`, `.env.local`, `server/.env`.
+Env files load in this order (later ones win): `.env.local` (from Neon), then `server/.env`.
 
 **On Render**, set `DATABASE_URL` (pooled), `DATABASE_URL_UNPOOLED`, `JWT_SECRET`, `CORS_ORIGINS` (your Vercel URL) and `NODE_ENV=production`. Build command: `npm install && npm run migrate`. Start command: `npm start -w server`.
 
@@ -132,3 +132,28 @@ Frequencies: `weekly`, `fortnightly`, `semi_monthly` (kinsenas, the 15th and 30t
 - **Bill & payday reminders** (expo-notifications, local): bills at 6 PM the day before, income at 9 AM on the day, for the next 60 days from each item's next date. Tapping one opens Income & Bills. Normal notifications, so they also trigger the phone's notification lights.
 - **Payment detection** (owner only; Kotlin `MoneyNotificationListener`): with Notification access granted, GCash / Maya / bank alerts (including bank SMS) are parsed on the phone (`shared/src/detect.js`, mirrored in `MoneyParser.kt`). Each match shows a "Log ₱500 expense?" notification and appears under "Detected payments" on Home; tapping opens quick add pre-filled with the amount and the matching account. OTPs, promos and balance messages are ignored. Raw text never leaves the phone.
   - Sideloaded APKs on Android 13+ may show "Restricted setting" when granting access: App info → ⋮ → Allow restricted settings.
+
+### People (utang)
+A person is an account of type `person`: **positive balance = they owe you, negative = you owe them**, and it counts toward net worth.
+- Lend: Transfer **Wallet → Juan** (or **Credit card → Juan** if they used your card).
+- Repayment: Transfer **Juan → GCash** (partial amounts are fine).
+- Borrow: Transfer **Tita → Wallet** (her balance goes negative); pay back with **Wallet → Tita**.
+- Write off: an expense on the person in the built-in **Written off** category.
+- Optional due date (reminder the evening before) and note; people can be private.
+- Summary returns `owed_to_you_cents` and `you_owe_cents`; liabilities include what you owe people. Income can't be logged directly on a person (use a transfer).
+
+### Loans / pay later (BillEase, SPayLater, GGives, Atome, Home Credit…)
+Accounts → **Set up a loan / pay later** (`POST /loans`, owner only) creates in one go: a debt account ("BillEase · Phone"), the purchase (expense) or cash-out (transfer into your account), the interest & fees (expense, category **Interest & fees**), and a monthly reminder linked to the loan. Each payment is a transfer (GCash → loan); the loan screen shows "3 of 6 paid" with a **Pay** button. When the balance reaches 0 the reminder stops and it no longer counts as a monthly bill (`paid_off`). Payment detection treats lender alerts as **loan payments** (not income) and ignores "payment due" reminders.
+
+### Getting started guide (`/setup`)
+Home shows **Set up your finances** (owner) until finished or dismissed; also in Settings. Steps: money you have (bank/e-wallet/cash presets with today's balance) → credit cards (amount owed) → loans you're already paying (`POST /loans` with `kind: "existing"`: starts at the remaining balance, nothing counted as this month's spending) → utang → salary & bills (day-of-month due dates) → starting net worth.
+
+### Payslips (salary, part-time, projects)
+`POST /payslips` records pay as an income transaction for the **net** amount plus a breakdown (`gross_cents`, `lines[]` of addition / contribution / tax / lost_pay / fee / other). `GET /payslips/template` pre-fills from the last payslip of the same source and cutoff (1–15 vs 16–end). `GET /payslips/summary?year=` gives totals per kind, label (SSS, PhilHealth, Pag-IBIG…), source and month. Breakdowns are private by default (partner sees only the net income). A salary's expected amount (and the monthly plan) uses the average net of its latest payslips (4 for twice-a-month, else 3). App: Income & Bills → **Log pay** / **Deductions**; the payday reminder opens Log pay. Part-time can compute gross from hours × rate; projects deduct platform fees / withholding tax.
+
+### Recent additions
+- **Custom days** schedule for income & bills (`frequency: "custom_days"`, `days_of_month: [13, 16]`; 31 = last day of short months). Monthly totals count each day.
+- **Onboarding:** `users.onboarded_at`; `POST /auth/onboarded`. New owners with no accounts are sent to `/setup` (can skip); the Home card disappears once finished or skipped.
+- **Reset my data:** `POST /household/reset { confirm: "RESET" }` (owner) deletes accounts, transactions, loans, people, bills and payslips; keeps logins, partner access, categories and named fee presets.
+- **MariBank** added to payment detection and setup presets; amounts written after the currency ("2,950.00 GCASH") are recognised.
+- **Widget** is now a slim quick-add bar (Expense / Income / Transfer), no balance shown.

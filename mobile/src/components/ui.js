@@ -121,7 +121,14 @@ export function Chip({ label, selected, onPress, icon, color }) {
 /** Horizontal scrolling row of chips. */
 export function ChipRow({ children }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.sm, paddingRight: space.lg }}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      // ScrollView grows to fill its parent by default; keep the row chip-height.
+      style={{ flexGrow: 0, flexShrink: 0 }}
+      contentContainerStyle={{ gap: space.sm, paddingRight: space.lg, alignItems: 'center' }}
+    >
       {children}
     </ScrollView>
   );
@@ -229,3 +236,59 @@ export const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
   fab: { position: 'absolute', right: 20, bottom: 20, width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
 });
+
+// ---------- Settings-style grouped lists ----------
+
+/** Grouped list section: small caps title, rounded card of rows with dividers, optional footnote. */
+export function Section({ title, footer, children }) {
+  const t = useTheme();
+  const items = (Array.isArray(children) ? children.flat() : [children]).filter(Boolean);
+  return (
+    <View style={{ gap: 8 }}>
+      {title && (
+        <Text style={{ fontSize: 12, fontWeight: '700', color: t.muted, textTransform: 'uppercase', letterSpacing: 0.8, marginLeft: 8 }}>{title}</Text>
+      )}
+      <View style={{ backgroundColor: t.card, borderRadius: radius.lg, overflow: 'hidden' }}>
+        {items.map((child, i) => (
+          <View key={child.key ?? i}>
+            {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.border, marginLeft: 62 }} />}
+            {child}
+          </View>
+        ))}
+      </View>
+      {footer && <Text style={{ fontSize: 12, color: t.muted, marginHorizontal: 8, lineHeight: 17 }}>{footer}</Text>}
+    </View>
+  );
+}
+
+/** One row: coloured icon tile, label + optional hint, and a right-hand element or chevron. */
+export function Row({ icon, iconColor, label, hint, onPress, right, danger, chevron }) {
+  const t = useTheme();
+  const tint = danger ? t.danger : iconColor ?? t.primary;
+  const content = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, paddingHorizontal: 16, minHeight: 60 }}>
+      {icon && (
+        <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: tint, alignItems: 'center', justifyContent: 'center' }}>
+          <Ionicons name={icon} size={18} color="#fff" />
+        </View>
+      )}
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ fontSize: 16, fontWeight: '600', color: danger ? t.danger : t.text }}>{label}</Text>
+        {hint ? <Text style={{ fontSize: 13, color: t.muted, lineHeight: 18 }}>{hint}</Text> : null}
+      </View>
+      {right}
+      {(chevron ?? (!!onPress && !right)) && <Ionicons name="chevron-forward" size={18} color={t.muted} />}
+    </View>
+  );
+  if (!onPress) return content;
+  return <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => ({ backgroundColor: pressed ? t.chip : 'transparent' })}>{content}</Pressable>;
+}
+
+export function SwitchRow({ value, onValueChange, disabled, ...row }) {
+  const t = useTheme();
+  return (
+    <View style={{ opacity: disabled ? 0.5 : 1 }}>
+      <Row {...row} right={<Switch value={value} onValueChange={onValueChange} disabled={disabled} trackColor={{ true: t.accent }} />} />
+    </View>
+  );
+}

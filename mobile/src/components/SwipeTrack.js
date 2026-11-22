@@ -19,17 +19,22 @@ export function SwipeTrack({ mode = 'both', onComplete, disabled, leftLabel = 'E
   const [width, setWidth] = useState(0);
   const both = mode === 'both';
   const max = Math.max(1, both ? (width - THUMB) / 2 - PAD : width - THUMB - PAD * 2);
+  // Latest callback/state without rebuilding the pan handler mid-drag (stale values bug).
+  const onCompleteRef = useRef(onComplete);
+  const disabledRef = useRef(disabled);
+  onCompleteRef.current = onComplete;
+  disabledRef.current = disabled;
 
   const finish = (dir) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    onComplete?.(dir);
+    onCompleteRef.current?.(dir);
     // slide back so the track is ready again (the success screen covers it meanwhile)
     setTimeout(() => Animated.spring(x, { toValue: 0, useNativeDriver: false }).start(), 400);
   };
 
   const pan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => !disabled,
-    onMoveShouldSetPanResponder: (_, g) => !disabled && Math.abs(g.dx) > 4,
+    onStartShouldSetPanResponder: () => !disabledRef.current,
+    onMoveShouldSetPanResponder: (_, g) => !disabledRef.current && Math.abs(g.dx) > 4,
     onPanResponderTerminationRequest: () => false,
     onPanResponderMove: (_, g) => x.setValue(Math.min(max, Math.max(both ? -max : 0, g.dx))),
     onPanResponderRelease: (_, g) => {
@@ -44,7 +49,7 @@ export function SwipeTrack({ mode = 'both', onComplete, disabled, leftLabel = 'E
     },
     onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: false }).start(),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [disabled, max, both, onComplete]);
+  }), [max, both]);
 
   const bg = both
     ? x.interpolate({ inputRange: [-max, 0, max], outputRange: [t.expense, t.chip, t.income] })

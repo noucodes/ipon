@@ -19,7 +19,7 @@ export function requireAuth({ pool, config }) {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, household_id, role, email, display_name, token_version FROM users WHERE id = $1`,
+      `SELECT id, household_id, role, email, display_name, token_version, onboarded_at FROM users WHERE id = $1`,
       [payload.sub],
     );
     const user = rows[0];

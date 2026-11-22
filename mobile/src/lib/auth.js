@@ -18,7 +18,7 @@ export function AuthProvider({ children }) {
     queryClient.clear();
     await clearOutbox(); // queued entries belong to this login
     await cancelReminders().catch(() => {});
-    updateWidget({ title: 'Finance Tracker', amount: 'Sign in', subtitle: '' });
+    updateWidget({ title: 'Ipon', amount: 'Sign in', subtitle: '' });
     setState({ loading: false, token: null, user: null });
   }, []);
 
@@ -50,6 +50,11 @@ export function AuthProvider({ children }) {
     ...state,
     signedIn: Boolean(state.token),
     isOwner: state.user?.role === 'owner',
+    /** Finished or skipped the setup guide (saved on the account, so it applies on every device). */
+    setOnboarded: async (done = true) => {
+      const { user } = await post('/auth/onboarded', { done });
+      setState((s) => ({ ...s, user }));
+    },
     signIn: async (email, password) => finish(await post('/auth/login', { email, password })),
     register: async (body) => finish(await post('/auth/register', body)),
     signOut,

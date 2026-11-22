@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { notFound } from '../lib/errors.js';
+import { withTransaction } from '../db.js';
 import { generateInviteCode } from '../lib/tokens.js';
 import { requireAuth, requireOwner } from '../middleware/auth.js';
 
@@ -27,6 +28,22 @@ export function householdRouter({ pool, config }) {
       [name, req.user.household_id],
     );
     res.json({ household: rows[0] });
+  });
+
+  // Start over: delete all money data in the wallet. Keeps logins, partner access,
+  // categories and named fee presets. Requires { confirm: "RESET" }.
+  router.post('/reset', requireOwner, async (req, res) => {
+    z.object({ confirm: z.literal('RESET') }).parse(req.body);
+    const hh = req.user.household_id;
+    const counts = await withTransaction(pool, async (db) => {
+      const tx = await db.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]); // payslips cascade
+      const rec = await db.query(`DELETE FROM recurring_items WHERE household_id = $1`, [hh]);
+      await db.query(`DELETE FROM transfer_fee_presets WHERE household_id = $1 AND name IS NULL`, [hh]); // remembered routes
+      const acc = await db.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]);
+      await db.query(`UPDATE users SET onboarded_at = NULL WHERE id = $1`, [req.user.id]); // show the setup guide again
+      return { transactions: tx.rowCount, recurring: rec.rowCount, accounts: acc.rowCount };
+    });
+    res.json({ deleted: counts });
   });
 
   // Create an invite code for your partner

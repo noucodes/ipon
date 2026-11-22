@@ -14,7 +14,7 @@ export async function biometricsAvailable() {
   return (await LocalAuthentication.hasHardwareAsync()) && (await LocalAuthentication.isEnrolledAsync());
 }
 
-export function authenticate(message = 'Unlock Finance Tracker') {
+export function authenticate(message = 'Unlock Ipon') {
   return LocalAuthentication.authenticateAsync({
     promptMessage: message,
     promptSubtitle: 'Use your fingerprint or face',
@@ -85,7 +85,7 @@ export function AppLock() {
       <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: t.primary, alignItems: 'center', justifyContent: 'center' }}>
         <Ionicons name="finger-print" size={44} color={t.primaryText} />
       </View>
-      <Text style={{ fontSize: 22, fontWeight: '800', color: t.heroText }}>Finance Tracker is locked</Text>
+      <Text style={{ fontSize: 22, fontWeight: '800', color: t.heroText }}>Ipon is locked</Text>
       {error && <Text style={{ color: t.danger, fontWeight: '600' }}>{error}</Text>}
       <Pressable onPress={unlock} style={({ pressed }) => ({ backgroundColor: t.primary, paddingVertical: 14, paddingHorizontal: 28, borderRadius: radius.pill, opacity: pressed ? 0.8 : 1 })}>
         <Text style={{ color: t.primaryText, fontWeight: '800', fontSize: 16 }}>Unlock</Text>

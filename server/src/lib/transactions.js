@@ -48,6 +48,10 @@ export async function validateTx(db, user, tx, { allowArchived = false } = {}) {
     if (!a) throw notFound('Account not found');
     if (a.archived && !allowArchived) throw badRequest(`${a.name} is archived`, 'account_archived');
   }
+  // People: lend/repay/borrow are transfers; an expense on a person is a write-off.
+  if (tx.type === 'income' && accounts.get(tx.account_id)?.type === 'person') {
+    throw badRequest('To record a repayment, use a transfer from the person to your account', 'person_income');
+  }
 
   if (tx.category_id) await assertCategory(db, user, tx.category_id, tx.type);
   return tx;

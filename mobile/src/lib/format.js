@@ -1,4 +1,4 @@
-import { formatPHP, todayInManila, addDays } from '@ft/shared';
+import { formatPHP, todayInManila, addDays, describeDays } from '@ft/shared';
 
 export { formatPHP };
 
@@ -6,8 +6,9 @@ export const ACCOUNT_TYPE_LABELS = {
   bank: 'Bank',
   digital_bank: 'Digital bank / e-wallet',
   cash: 'Cash on hand',
-  credit_card: 'Credit card',
+  credit_card: 'Credit card / Loan',
   savings: 'Savings / investment',
+  person: 'People (utang)',
 };
 
 export const ACCOUNT_TYPE_ICONS = {
@@ -16,6 +17,7 @@ export const ACCOUNT_TYPE_ICONS = {
   cash: 'cash-outline',
   credit_card: 'card-outline',
   savings: 'trending-up-outline',
+  person: 'person-outline',
 };
 
 export const FREQUENCY_LABELS = {
@@ -25,7 +27,14 @@ export const FREQUENCY_LABELS = {
   monthly: 'Monthly',
   quarterly: 'Quarterly',
   yearly: 'Yearly',
+  custom_days: 'Custom days',
 };
+
+/** 'Twice a month (kinsenas)' or, for custom days, 'Every 13th & 16th'. */
+export function scheduleLabel(item) {
+  if (item.frequency === 'custom_days' && item.days_of_month?.length) return `Every ${describeDays(item.days_of_month)}`;
+  return FREQUENCY_LABELS[item.frequency];
+}
 
 /** Peso string for an input field: 150000 -> "1500", 1550 -> "15.50" */
 export function centsToInput(cents) {

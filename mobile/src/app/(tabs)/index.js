@@ -1,22 +1,25 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import { Body, Card, Empty, ErrorText, Ionicons, Label, Loading, Money } from '../../components/ui';
 import { TransactionRow } from '../../components/TransactionRow';
 import { OutboxBanner } from '../../components/Outbox';
 import { DetectedList } from '../../components/DetectedList';
+import { SetupCard } from '../../components/SetupCard';
 import { BigAmount } from '../../components/BigAmount';
 import { Sparkline } from '../../components/Sparkline';
 import { AccountAvatar } from '../../components/AccountAvatar';
-import { useHousehold, useNetWorthHistory, useSummary } from '../../lib/queries';
+import { useAccounts, useHousehold, useNetWorthHistory, useSummary } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useDoubleTap } from '../../lib/useDoubleTap';
 import { formatPHP, friendlyDate } from '../../lib/format';
-import { useTheme, space, radius } from '../../theme';
+import { useTheme, useIsDark, space, radius } from '../../theme';
+import { IponLogo } from '../../components/IponLogo';
 
 export default function Home() {
   const t = useTheme();
+  const isDark = useIsDark();
   const router = useRouter();
   const { user, isOwner } = useAuth();
   const summary = useSummary();
@@ -29,24 +32,46 @@ export default function Home() {
   const monthNet = s?.month_flow.net_cents ?? 0;
 
   const refresh = () => Promise.all([summary.refetch(), history.refetch()]);
+  const accounts = useAccounts({ includeArchived: true });
+
+  // Coming back to Home (e.g. after scrolling far down in Settings) starts at the top,
+  // so a stale scroll position can't leave a blank area.
+  const scrollRef = useRef(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, []));
+
+  // First time: a new owner with nothing set up goes straight to the setup guide (they can skip it).
+  if (isOwner && user && !user.onboarded && accounts.data && accounts.data.length === 0) {
+    return <Redirect href="/setup" />;
+  }
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: t.bg }} {...doubleTap}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg, paddingBottom: 40, gap: space.lg }}
         refreshControl={<RefreshControl refreshing={summary.isRefetching} onRefresh={refresh} />}
       >
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: -4 }}>
+          <IponLogo height={30} dark={isDark} />
+        </View>
+
         {/* Hero balance card */}
         <View style={{ backgroundColor: t.hero, borderRadius: 30, padding: space.xl, paddingBottom: 34, gap: space.md }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <Text style={{ flex: 1, fontSize: 20, color: t.heroText, lineHeight: 26 }}>
-              <Text style={{ fontWeight: '800' }}>{isOwner ? `Hi ${user?.display_name ?? ''}!` : `${ownerName ?? 'Partner'}'s`}</Text>
-              <Text style={{ opacity: 0.55 }}>{isOwner ? ' Welcome\nto your wallet' : ' wallet\nview & log entries'}</Text>
-            </Text>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: t.heroText }} numberOfLines={1}>
+                {isOwner ? `Hi ${firstName(user?.display_name)}!` : `${firstName(ownerName) || 'Partner'}'s wallet`}
+              </Text>
+              <Text style={{ fontSize: 14, color: t.heroText, opacity: 0.6 }}>
+                {isOwner ? 'Welcome to your wallet' : 'You can view and log entries'}
+              </Text>
+            </View>
             <Pressable
               onPress={() => setHidden((h) => !h)}
               accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'}
-              style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
             >
               <Ionicons name={hidden ? 'eye-off-outline' : 'eye-outline'} size={20} color={t.heroText} />
             </Pressable>
@@ -91,6 +116,7 @@ export default function Home() {
         </View>
 
         <OutboxBanner />
+        {isOwner && <SetupCard />}
         {isOwner && <DetectedList />}
         <ErrorText error={summary.error} />
 
@@ -101,7 +127,7 @@ export default function Home() {
               <Card style={{ flex: 1, padding: space.md }} onPress={() => router.push('/accounts')}>
                 <Text style={{ fontWeight: '800', color: t.text }}>Accounts</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-                  {s.balances.accounts.filter((a) => !a.archived).slice(0, 4).map((a) => (
+                  {s.balances.accounts.filter((a) => !a.archived && a.type !== 'person').slice(0, 4).map((a) => (
                     <AccountAvatar key={a.id} account={a} size={40} showBalance={!hidden} onPress={() => router.push(`/account/${a.id}`)} />
                   ))}
                   {s.balances.accounts.length === 0 && <Body muted style={{ fontSize: 13 }}>Add your first account</Body>}
@@ -113,10 +139,29 @@ export default function Home() {
                 <Sparkline values={(history.data ?? []).map((p) => p.net_worth_cents)} color={t.accent} height={64} />
                 <Text style={{ fontWeight: '800', color: t.text, fontSize: 15 }}>
                   {hidden ? '••••' : formatPHP(s.month_flow.income_cents)}
-                  <Text style={{ fontWeight: '500', color: t.muted, fontSize: 12 }}> in this month</Text>
+                  <Text style={{ fontWeight: '500', color: t.muted, fontSize: 12 }}> income this month</Text>
                 </Text>
               </Card>
             </View>
+
+            {/* Utang */}
+            {(s.balances.owed_to_you_cents !== 0 || s.balances.you_owe_cents !== 0) && (
+              <Card onPress={() => router.push('/accounts')} style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                <Ionicons name="people-outline" size={22} color={t.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '800', color: t.text }}>Utang</Text>
+                  <Text style={{ color: t.muted, fontSize: 12 }}>People who owe you / you owe</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {s.balances.owed_to_you_cents > 0 && (
+                    <Text style={{ color: t.income, fontWeight: '800' }}>{hidden ? '••••' : formatPHP(s.balances.owed_to_you_cents)} <Text style={{ fontWeight: '500', fontSize: 12, color: t.muted }}>owed to you</Text></Text>
+                  )}
+                  {s.balances.you_owe_cents < 0 && (
+                    <Text style={{ color: t.expense, fontWeight: '800' }}>{hidden ? '••••' : formatPHP(Math.abs(s.balances.you_owe_cents))} <Text style={{ fontWeight: '500', fontSize: 12, color: t.muted }}>you owe</Text></Text>
+                  )}
+                </View>
+              </Card>
+            )}
 
             {/* Recent activity */}
             <View style={{ gap: space.sm }}>
@@ -170,6 +215,8 @@ export default function Home() {
     </SafeAreaView>
   );
 }
+
+const firstName = (name) => (name ?? '').trim().split(/\s+/)[0];
 
 function ActionPill({ icon, label, onPress }) {
   const t = useTheme();

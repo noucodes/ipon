@@ -15,6 +15,14 @@ export function SwipeCard({ children, canSwipe, onSwipe, onBlocked, leftLabel = 
   const [width, setWidth] = useState(360);
   const passed = useRef(false);
   const threshold = width * 0.28;
+  // Always call the latest callbacks: the pan handler is created once, but the amount
+  // (and so what onSwipe saves) changes with every key press.
+  const onSwipeRef = useRef(onSwipe);
+  const onBlockedRef = useRef(onBlocked);
+  const canSwipeRef = useRef(canSwipe);
+  onSwipeRef.current = onSwipe;
+  onBlockedRef.current = onBlocked;
+  canSwipeRef.current = canSwipe;
 
   const reset = () => {
     x.setValue(0);
@@ -24,9 +32,9 @@ export function SwipeCard({ children, canSwipe, onSwipe, onBlocked, leftLabel = 
 
   const complete = (dir) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    Animated.timing(x, { toValue: (dir === 'right' ? 1 : -1) * width * 1.4, duration: 200, useNativeDriver: true }).start(() => {
-      onSwipe(dir);
-      setTimeout(reset, 350); // hidden behind the success screen, or back for another try
+    onSwipeRef.current(dir); // confirmation appears right away, while the card flies off
+    Animated.timing(x, { toValue: (dir === 'right' ? 1 : -1) * width * 1.4, duration: 160, useNativeDriver: true }).start(() => {
+      setTimeout(reset, 300); // hidden behind the success screen, or back for another try
     });
   };
 
@@ -39,7 +47,7 @@ export function SwipeCard({ children, canSwipe, onSwipe, onBlocked, leftLabel = 
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => { passed.current = false; },
       onPanResponderMove: (_, g) => {
-        const dx = canSwipe ? g.dx : g.dx * 0.25; // resist when there's nothing to save
+        const dx = canSwipeRef.current ? g.dx : g.dx * 0.25; // resist when there's nothing to save
         x.setValue(dx);
         const over = Math.abs(dx) > threshold;
         if (over !== passed.current) {
@@ -49,17 +57,17 @@ export function SwipeCard({ children, canSwipe, onSwipe, onBlocked, leftLabel = 
       },
       onPanResponderRelease: (_, g) => {
         const fling = Math.abs(g.vx) > 0.9 && Math.abs(g.dx) > threshold * 0.4;
-        if (canSwipe && (Math.abs(g.dx) > threshold || fling)) {
+        if (canSwipeRef.current && (Math.abs(g.dx) > threshold || fling)) {
           complete(g.dx > 0 ? 'right' : 'left');
         } else {
-          if (!canSwipe && Math.abs(g.dx) > 30) onBlocked?.();
+          if (!canSwipeRef.current && Math.abs(g.dx) > 30) onBlockedRef.current?.();
           Animated.spring(x, { toValue: 0, friction: 6, useNativeDriver: true }).start();
         }
       },
       onPanResponderTerminate: () => Animated.spring(x, { toValue: 0, useNativeDriver: true }).start(),
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSwipe, threshold, width]);
+  }, [threshold, width]);
 
   const rotate = x.interpolate({ inputRange: [-width, 0, width], outputRange: ['-14deg', '0deg', '14deg'] });
   const leftStamp = x.interpolate({ inputRange: [-threshold, -20, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });

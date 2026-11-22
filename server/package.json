@@ -7,8 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "build": "node scripts/check.js",
-    "dev": "node --watch --env-file-if-exists=../.env --env-file-if-exists=../.env.local --env-file-if-exists=.env src/index.js",
-    "migrate": "node --env-file-if-exists=../.env --env-file-if-exists=../.env.local --env-file-if-exists=.env scripts/migrate.js",
+    "dev": "node --watch --env-file-if-exists=../.env.local --env-file-if-exists=.env src/index.js",
+    "migrate": "node --env-file-if-exists=../.env.local --env-file-if-exists=.env scripts/migrate.js",
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {

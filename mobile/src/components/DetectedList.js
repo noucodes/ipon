@@ -27,10 +27,10 @@ export function DetectedList() {
             style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: t.card, borderRadius: radius.md, padding: space.md, opacity: pressed ? 0.7 : 1 })}
           >
             <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: '700', color: t.text }}>{d.source} · {d.type === 'income' ? 'received' : 'sent / paid'}</Text>
+              <Text style={{ fontWeight: '700', color: t.text }}>{d.source} · {d.type === 'income' ? 'received' : d.type === 'loan_payment' ? 'loan payment' : 'sent / paid'}</Text>
               <Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>{d.text}</Text>
             </View>
-            <Money cents={d.amount_cents} kind={d.type} signed />
+            <Money cents={d.amount_cents} kind={d.type === 'loan_payment' ? 'transfer' : d.type} signed={d.type !== 'loan_payment'} />
           </Pressable>
           <IconButton icon="close-circle-outline" label="Dismiss" color={t.muted} onPress={() => dismiss(d.id)} />
         </View>

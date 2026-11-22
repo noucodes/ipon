@@ -17,7 +17,8 @@ export function useDetections() {
 
 /** Deep link that opens quick add pre-filled with a detection. */
 export function detectionHref(d) {
-  return `/add?type=${d.type}&amount=${d.amount_cents}&source=${encodeURIComponent(d.source)}&detection=${d.id}`;
+  const type = d.type === 'loan_payment' ? 'transfer' : d.type; // loan payments go into the loan account
+  return `/add?type=${type}&amount=${d.amount_cents}&source=${encodeURIComponent(d.source)}&detection=${d.id}`;
 }
 
 /** Best guess at which of your accounts a source ("GCash", "BDO") refers to. */

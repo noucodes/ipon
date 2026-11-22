@@ -35,7 +35,7 @@ export function summaryRouter({ pool, config }) {
     const [accountsRes, flowsRes, categoriesRes, recurringRes] = await Promise.all([
       pool.query(
         `WITH ${SCOPE_CTE}
-         SELECT s.id, s.name, s.type, s.is_private, s.archived, b.balance_cents
+         SELECT s.id, s.name, s.type, s.is_private, s.archived, s.due_date, b.balance_cents
            FROM scope s
            JOIN account_balances b ON b.account_id = s.id
           ORDER BY s.archived, s.sort_order, s.created_at`,
@@ -63,7 +63,11 @@ export function summaryRouter({ pool, config }) {
     const accounts = accountsRes.rows.filter((a) => !a.archived || a.balance_cents !== 0);
     const byType = Object.fromEntries(ACCOUNT_TYPES.map((t) => [t, 0]));
     for (const a of accounts) byType[a.type] += a.balance_cents;
-    const liabilities = byType.credit_card;
+    // People: positive = they owe you (an asset), negative = you owe them (a debt)
+    const people = accounts.filter((a) => a.type === 'person');
+    const owedToYou = sum(people.filter((a) => a.balance_cents > 0), (a) => a.balance_cents);
+    const youOwe = sum(people.filter((a) => a.balance_cents < 0), (a) => a.balance_cents);
+    const liabilities = byType.credit_card + youOwe;
     const netWorth = sum(accounts, (a) => a.balance_cents);
 
     // --- This month's money in / out by category
@@ -89,7 +93,7 @@ export function summaryRouter({ pool, config }) {
     const sorted = (m) => [...m.values()].sort((a, b) => b.total_cents - a.total_cents);
 
     // --- Recurring income and bills
-    const recurring = recurringRes.rows.map((r) => serializeRecurring(req.user, r));
+    const recurring = recurringRes.rows.map((r) => serializeRecurring(req.user, r)).filter((r) => !r.paid_off);
     const monthlyIncome = sum(recurring.filter((r) => r.kind === 'income'), (r) => r.monthly_equivalent_cents);
     const monthlyBills = sum(recurring.filter((r) => r.kind === 'expense'), (r) => r.monthly_equivalent_cents);
     const horizon = addDays(today, 30);
@@ -105,6 +109,8 @@ export function summaryRouter({ pool, config }) {
         net_worth_cents: netWorth,
         assets_cents: netWorth - liabilities,
         liabilities_cents: liabilities,
+        owed_to_you_cents: owedToYou,
+        you_owe_cents: youOwe,
         by_type: byType,
         accounts,
       },

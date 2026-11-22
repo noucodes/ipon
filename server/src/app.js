@@ -10,6 +10,8 @@ import { categoriesRouter } from './routes/categories.js';
 import { feePresetsRouter } from './routes/feePresets.js';
 import { recurringRouter } from './routes/recurring.js';
 import { summaryRouter } from './routes/summary.js';
+import { loansRouter } from './routes/loans.js';
+import { payslipsRouter } from './routes/payslips.js';
 
 export function createApp({ pool, config }) {
   const app = express();
@@ -37,6 +39,8 @@ export function createApp({ pool, config }) {
   app.use('/fee-presets', feePresetsRouter({ pool, config }));
   app.use('/recurring', recurringRouter({ pool, config }));
   app.use('/summary', summaryRouter({ pool, config }));
+  app.use('/loans', loansRouter({ pool, config }));
+  app.use('/payslips', payslipsRouter({ pool, config }));
 
   app.use((req, res, next) => next(notFound('Route not found')));
   app.use(errorHandler);

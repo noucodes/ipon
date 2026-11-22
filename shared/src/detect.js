@@ -2,6 +2,23 @@
 // Runs on the phone only; the raw text is never sent anywhere.
 // The Kotlin listener (mobile/modules/wallet-shortcuts) mirrors these rules.
 
+// Lenders / buy-now-pay-later. Their alerts are loan payments (a transfer into the loan),
+// never income. Checked before e-wallets so 'GGives' inside GCash counts as the lender.
+export const LENDERS = [
+  { label: 'MariBank Credit', match: /\bmari ?(?:bank )?credit\b/i }, // before the plain MariBank bank
+  { label: 'BillEase', match: /\bbill ?ease\b/i },
+  { label: 'SPayLater', match: /\bs ?pay ?later\b/i },
+  { label: 'GGives', match: /\bg ?gives\b/i },
+  { label: 'GLoan', match: /\bg ?loan\b/i },
+  { label: 'Atome', match: /\batome\b/i },
+  { label: 'Home Credit', match: /\bhome ?credit\b/i },
+  { label: 'Tala', match: /\btala\b/i },
+  { label: 'Cashalo', match: /\bcashalo\b/i },
+  { label: 'Juanhand', match: /\bjuan ?hand\b/i },
+];
+const LOAN_PAID = /\b(payment|paid|repayment|posted)\b/i;
+const LOAN_NOT_YET = /\b(due|reminder|overdue|upcoming|avoid|late fee|will be)\b/i;
+
 export const KNOWN_SOURCES = [
   { label: 'GCash', match: /\bg-?cash\b/i, packages: ['com.globe.gcash.android'] },
   { label: 'Maya', match: /\b(pay)?maya\b/i, packages: ['com.paymaya'] },
@@ -15,6 +32,7 @@ export const KNOWN_SOURCES = [
   { label: 'RCBC', match: /\brcbc\b/i },
   { label: 'China Bank', match: /\bchina ?bank\b/i },
   { label: 'SeaBank', match: /\bsea ?bank\b/i },
+  { label: 'MariBank', match: /\bmari ?bank\b/i },
   { label: 'GoTyme', match: /\bgo ?tyme\b/i },
   { label: 'CIMB', match: /\bcimb\b/i },
   { label: 'Tonik', match: /\btonik\b/i },
@@ -22,7 +40,18 @@ export const KNOWN_SOURCES = [
   { label: 'GrabPay', match: /\bgrab ?pay\b/i },
 ];
 
+// Currency before the amount ("PHP 500.00", "₱500", "P 1,000") ...
 const AMOUNT = /(?:₱|\bPHP|\bPhp|\bP)\s?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)/;
+// ... or after it, as in GCash's "You have sent 2,950.00 GCASH to ..." and "500.00 PHP"
+const AMOUNT_AFTER = /\b((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)\s?(?:PHP|Php|php|GCASH|GCash|pesos?)\b/;
+
+/** First peso amount in the text, in centavos (0 if none). */
+function findAmount(text) {
+  const a = text.match(AMOUNT);
+  const b = text.match(AMOUNT_AFTER);
+  const m = a && b ? (a.index <= b.index ? a : b) : a ?? b;
+  return m ? Math.round(Number(m[1].replace(/,/g, '')) * 100) : 0;
+}
 const SKIP = /\b(otp|one[- ]time|verification code|passcode|do not share|promo|win |raffle|available balance is|your balance is)\b/i;
 const INCOME = /\b(received|receive|sent you|credited|cash[- ]?in|deposited|deposit|refund(ed)?|incoming|added to your)\b/i;
 const EXPENSE = /\b(sent|paid|payment|purchase[d]?|debited|transferred|withdr[ae]w[nl]?|withdrawal|cash[- ]?out|charged|spent|bought|bills? pay)\b/i;
@@ -35,16 +64,21 @@ export function detectSource(packageName, text) {
 }
 
 /**
- * Parse one notification. Returns { source, type: 'expense'|'income', amount_cents } or null.
+ * Parse one notification. Returns { source, type, amount_cents } or null, where type is
+ * 'expense' | 'income' | 'loan_payment' (you paid a BillEase/SPayLater… installment).
  * `text` = title + body.
  */
 export function parseMoneyNotification(packageName, text) {
   if (!text || SKIP.test(text)) return null;
+  const lender = LENDERS.find((l) => l.match.test(text));
+  if (lender) {
+    if (!LOAN_PAID.test(text) || LOAN_NOT_YET.test(text)) return null; // reminders aren't payments
+    const cents = findAmount(text);
+    return cents ? { source: lender.label, type: 'loan_payment', amount_cents: cents } : null;
+  }
   const source = detectSource(packageName, text);
   if (!source) return null;
-  const m = text.match(AMOUNT);
-  if (!m) return null;
-  const amount = Math.round(Number(m[1].replace(/,/g, '')) * 100);
+  const amount = findAmount(text);
   if (!amount) return null;
   // "sent you" / "received" wins over a bare "sent"
   const type = INCOME.test(text) ? 'income' : EXPENSE.test(text) ? 'expense' : null;

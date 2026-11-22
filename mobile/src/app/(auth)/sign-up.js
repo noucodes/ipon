@@ -3,9 +3,11 @@ import { View } from 'react-native';
 import { Link } from 'expo-router';
 import { Body, Button, ErrorText, Field, Screen, Segmented, Title } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
-import { space } from '../../theme';
+import { space, useIsDark } from '../../theme';
+import { IponLogo } from '../../components/IponLogo';
 
 export default function SignUp() {
+  const isDark = useIsDark();
   const { register } = useAuth();
   const [mode, setMode] = useState('new'); // 'new' household or 'join' with invite code
   const [form, setForm] = useState({ display_name: '', email: '', password: '', household_name: '', invite_code: '' });
@@ -36,6 +38,7 @@ export default function SignUp() {
 
   return (
     <Screen contentStyle={{ paddingTop: 40, gap: space.lg }}>
+      <IponLogo height={40} dark={isDark} />
       <Title>Create account</Title>
       <Segmented
         value={mode}

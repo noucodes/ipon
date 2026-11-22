@@ -3,10 +3,13 @@
 
 export const CURRENCY = 'PHP';
 
-export const ACCOUNT_TYPES = ['bank', 'digital_bank', 'cash', 'credit_card', 'savings'];
+export const ACCOUNT_TYPES = ['bank', 'digital_bank', 'cash', 'credit_card', 'savings', 'person'];
+/** Real money accounts (everything except people you lend to / borrow from). */
+export const MONEY_ACCOUNT_TYPES = ACCOUNT_TYPES.filter((t) => t !== 'person');
 export const TRANSACTION_TYPES = ['expense', 'income', 'transfer'];
 export const FEE_PAID_BY = ['sender', 'receiver'];
-export const FREQUENCIES = ['weekly', 'fortnightly', 'semi_monthly', 'monthly', 'quarterly', 'yearly'];
+// custom_days = specific days every month (days_of_month, e.g. [13, 16] or [15, 31]; 31 = last day)
+export const FREQUENCIES = ['weekly', 'fortnightly', 'semi_monthly', 'monthly', 'quarterly', 'yearly', 'custom_days'];
 export const RECURRING_KINDS = ['income', 'expense'];
 
 /** How many times per year each frequency occurs. */
@@ -20,7 +23,8 @@ const PER_YEAR = {
 };
 
 /** Convert a recurring amount to its monthly equivalent (rounded to centavos). */
-export function monthlyEquivalentCents(amountCents, frequency) {
+export function monthlyEquivalentCents(amountCents, frequency, daysOfMonth = []) {
+  if (frequency === 'custom_days') return amountCents * Math.max(1, daysOfMonth?.length ?? 0);
   const n = PER_YEAR[frequency];
   if (!n) throw new Error(`Unknown frequency: ${frequency}`);
   return Math.round((amountCents * n) / 12);
@@ -110,9 +114,12 @@ export const DEFAULT_CATEGORIES = [
   { name: 'Health', kind: 'expense', icon: 'heart' },
   { name: 'Subscriptions', kind: 'expense', icon: 'repeat' },
   { name: 'Transfer fees', kind: 'expense', icon: 'swap', system: true },
+  { name: 'Written off', kind: 'expense', icon: 'close-circle', system: true },
+  { name: 'Interest & fees', kind: 'expense', icon: 'trending-up', system: true },
   { name: 'Other', kind: 'expense', icon: 'dots' },
   { name: 'Salary', kind: 'income', icon: 'briefcase' },
   { name: 'Freelance', kind: 'income', icon: 'laptop' },
+  { name: 'Part-time', kind: 'income', icon: 'time' },
   { name: 'Gifts', kind: 'income', icon: 'gift' },
   { name: 'Other income', kind: 'income', icon: 'dots' },
 ];
@@ -122,5 +129,6 @@ export const DEFAULT_FEE_PRESETS = [
   { name: 'PESONet', fee_cents: 0, fee_paid_by: 'sender' },
 ];
 
-export { parseMoneyNotification, detectSource, KNOWN_SOURCES } from './detect.js';
-export { occurrences } from './schedule.js';
+export { parseMoneyNotification, detectSource, KNOWN_SOURCES, LENDERS } from './detect.js';
+export { occurrences, nextCustomDate, describeDays } from './schedule.js';
+export { INCOME_TYPES, LINE_KINDS, PRESET_LINES, computeNet, payslipTotals, cutoffOf } from './payslip.js';

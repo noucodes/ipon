@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { Body, Button, Card, Label, ToggleRow } from './ui';
+import { Row, Section, SwitchRow } from './ui';
 import { APP_LOCK_KEY, authenticate, biometricsAvailable } from './AppLock';
 import { useAuth } from '../lib/auth';
-import { useRecurring } from '../lib/queries';
+import { useAccounts, useRecurring } from '../lib/queries';
 import { remindersEnabled, requestNotificationPermission, scheduleReminders, setRemindersEnabled } from '../lib/reminders';
 import { detection, isAvailable as nativeAvailable } from '../../modules/wallet-shortcuts';
-import { useTheme } from '../theme';
 
 export function SmartFeatures() {
-  const t = useTheme();
   const { isOwner } = useAuth();
   const recurring = useRecurring();
+  const accounts = useAccounts();
   const [lock, setLock] = useState(false);
   const [reminders, setReminders] = useState(false);
   const [detect, setDetect] = useState({ active: false, access: false });
@@ -44,14 +43,14 @@ export function SmartFeatures() {
   async function toggleReminders(on) {
     setNote(null);
     if (on && !(await requestNotificationPermission())) {
-      setNote('Notifications are blocked. Allow them for Finance Tracker in your phone settings.');
+      setNote('Notifications are blocked. Allow them for Ipon in your phone settings.');
       return;
     }
     await setRemindersEnabled(on);
     setReminders(on);
     if (on) {
-      const n = await scheduleReminders(recurring.data ?? []);
-      setNote(n ? `${n} reminder${n === 1 ? '' : 's'} scheduled from your income & bills.` : 'On. Add a next date to your income & bills to get reminders.');
+      const n = await scheduleReminders(recurring.data ?? [], accounts.data ?? []);
+      setNote(n ? `${n} reminder${n === 1 ? '' : 's'} scheduled.` : 'On. Add next dates to your income & bills to get reminders.');
     }
   }
 
@@ -63,54 +62,25 @@ export function SmartFeatures() {
     if (on && !detection.hasAccess()) detection.openSettings();
   }
 
+  const needsAccess = detect.active && !detect.access;
+  const footer = note
+    ?? (needsAccess
+      ? 'If Android says "Restricted setting": Settings → Apps → Ipon → ⋮ → Allow restricted settings, then try again.'
+      : 'Payment alerts are read on this phone only. Nothing is uploaded.');
+
   return (
-    <Card>
-      <Label>Smart features</Label>
-
-      <ToggleRow
-        label="Fingerprint lock"
-        hint="Ask for your fingerprint or face when opening the app"
-        value={lock}
-        onValueChange={toggleLock}
-      />
-
-      <ToggleRow
-        label="Bill & payday reminders"
-        hint="The evening before a bill is due, and on payday morning"
-        value={reminders}
-        onValueChange={toggleReminders}
-      />
-
-      {isOwner && (
-        nativeAvailable ? (
-          <>
-            <ToggleRow
-              label="Detect GCash, Maya & bank payments"
-              hint="Reads payment alerts on this phone and offers to log them. Nothing is uploaded."
-              value={detect.active}
-              onValueChange={toggleDetect}
-            />
-            {detect.active && !detect.access && (
-              <>
-                <Body style={{ color: t.danger, fontSize: 13 }}>
-                  Needs Notification access: turn on "Finance Tracker payment detection".
-                </Body>
-                <Body muted style={{ fontSize: 12 }}>
-                  If Android says "Restricted setting": Settings → Apps → Finance Tracker → ⋮ (top right) → Allow restricted settings, then try again.
-                </Body>
-                <Button title="Open Notification access" variant="secondary" icon="notifications-outline" onPress={() => detection.openSettings()} />
-              </>
-            )}
-            {detect.active && detect.access && (
-              <Body muted style={{ fontSize: 13 }}>Watching for payment alerts. Detected ones appear on Home.</Body>
-            )}
-          </>
-        ) : (
-          <Body muted style={{ fontSize: 13 }}>Payment detection works in the installed app, not in Expo Go.</Body>
-        )
+    <Section title="Smart features" footer={footer}>
+      <SwitchRow icon="finger-print" iconColor="#0B6B4F" label="Fingerprint lock" hint="When opening the app" value={lock} onValueChange={toggleLock} />
+      <SwitchRow icon="notifications-outline" iconColor="#F59E0B" label="Reminders" hint="Bills, utang & payday" value={reminders} onValueChange={toggleReminders} />
+      {isOwner && nativeAvailable && (
+        <SwitchRow icon="sparkles-outline" iconColor="#C9971C" label="Detect payments" hint="GCash, Maya, banks & BillEase alerts" value={detect.active} onValueChange={toggleDetect} />
       )}
-
-      {note && <Body muted style={{ fontSize: 13 }}>{note}</Body>}
-    </Card>
+      {isOwner && nativeAvailable && needsAccess && (
+        <Row icon="alert-circle-outline" danger label="Allow notification access" hint='Turn on "Ipon payment detection"' onPress={() => detection.openSettings()} />
+      )}
+      {isOwner && !nativeAvailable && (
+        <Row icon="sparkles-outline" iconColor="#C9971C" label="Detect payments" hint="Works in the installed app, not Expo Go" />
+      )}
+    </Section>
   );
 }

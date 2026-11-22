@@ -1,27 +1,33 @@
 import { useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ACCOUNT_TYPES, toCents } from '@ft/shared';
+import { MONEY_ACCOUNT_TYPES, toCents } from '@ft/shared';
+import { PersonScreen } from '../../components/PersonScreen';
+import { loanProgress } from '../../lib/loans';
 import { RequireAuth } from '../../components/RequireAuth';
 import { Body, Button, Chip, ErrorText, Field, Label, Loading, Money, ToggleRow, Card } from '../../components/ui';
 import { TransactionRow } from '../../components/TransactionRow';
 import { useAccount, useMoneyMutation, useTransactions, api } from '../../lib/queries';
-import { ACCOUNT_TYPE_ICONS, ACCOUNT_TYPE_LABELS, centsToInput } from '../../lib/format';
-import { space } from '../../theme';
+import { ACCOUNT_TYPE_ICONS, ACCOUNT_TYPE_LABELS, centsToInput, formatPHP, friendlyDate } from '../../lib/format';
+import { space, useTheme } from '../../theme';
 
-// /account/new  -> create
-// /account/<id> -> view / edit
+// /account/new               -> create an account
+// /account/new?type=person   -> add a person (utang)
+// /account/<id>              -> view / edit (people get their own screen)
 export default function AccountScreen() {
-  const { id } = useLocalSearchParams();
+  const { id, type } = useLocalSearchParams();
   const isNew = id === 'new';
   const q = useAccount(isNew ? null : id);
+  const isPerson = isNew ? type === 'person' : q.data?.type === 'person';
 
   return (
     <RequireAuth>
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 48, gap: space.lg }} keyboardShouldPersistTaps="handled">
         {!isNew && q.isPending && <Loading />}
         <ErrorText error={q.error} />
-        {(isNew || q.data) && <AccountForm key={q.data?.id ?? 'new'} account={q.data} />}
+        {(isNew || q.data) && (isPerson
+          ? <PersonScreen key={q.data?.id ?? 'new-person'} person={q.data} />
+          : <AccountForm key={q.data?.id ?? 'new'} account={q.data} />)}
       </ScrollView>
     </RequireAuth>
   );
@@ -95,6 +101,8 @@ function AccountForm({ account }) {
         </Card>
       )}
 
+      {!isNew && <LoanProgress account={account} />}
+
       {readOnly ? (
         <Body muted>Only the wallet owner can change account settings. You can still log transactions on it.</Body>
       ) : (
@@ -104,7 +112,7 @@ function AccountForm({ account }) {
           <View style={{ gap: space.sm }}>
             <Label>Type</Label>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
-              {ACCOUNT_TYPES.map((tp) => (
+              {MONEY_ACCOUNT_TYPES.map((tp) => (
                 <Chip key={tp} label={ACCOUNT_TYPE_LABELS[tp]} icon={ACCOUNT_TYPE_ICONS[tp]} selected={type === tp} onPress={() => setType(tp)} />
               ))}
             </View>
@@ -163,5 +171,40 @@ function AccountForm({ account }) {
         </Card>
       )}
     </>
+  );
+}
+
+/** "3 of 6 paid · ₱3,300 left · next ₱1,100 due Dec 15" for loan accounts. */
+function LoanProgress({ account }) {
+  const t = useTheme();
+  const router = useRouter();
+  const p = loanProgress(account);
+  if (!p) return null;
+  return (
+    <Card>
+      <Label>Loan progress</Label>
+      <Body style={{ fontWeight: '800', fontSize: 17 }}>
+        {p.done ? 'Paid off 🎉' : `${p.paidCount} of ${p.months} payments made`}
+      </Body>
+      <View style={{ height: 10, borderRadius: 5, backgroundColor: t.chip }}>
+        <View style={{ height: 10, borderRadius: 5, backgroundColor: t.accent, width: `${Math.max(2, p.pct * 100)}%` }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Body muted style={{ fontSize: 13 }}>Paid {formatPHP(p.paid)}</Body>
+        <Body muted style={{ fontSize: 13 }}>Left {formatPHP(p.owed)}</Body>
+      </View>
+      {!p.done && (
+        <>
+          <Body muted style={{ fontSize: 13 }}>
+            Next: {formatPHP(Math.min(account.loan_installment_cents, p.owed))}{p.nextDue ? ` due ${friendlyDate(p.nextDue)}` : ''} · {p.remainingPayments} left
+          </Body>
+          <Button
+            title={`Pay ${formatPHP(Math.min(account.loan_installment_cents, p.owed))}`}
+            icon="arrow-up"
+            onPress={() => router.push(`/add?type=transfer&to=${account.id}&amount=${Math.min(account.loan_installment_cents, p.owed)}`)}
+          />
+        </>
+      )}
+    </Card>
   );
 }

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { ACCOUNT_TYPES } from '@ft/shared';
 import { conflict, notFound } from '../lib/errors.js';
-import { parseId, signedCents } from '../lib/validators.js';
+import { parseId, signedCents, dateStr } from '../lib/validators.js';
 import { visibleSql, isOwner, requireOwner } from '../lib/access.js';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -14,6 +14,9 @@ const fields = {
   is_private: z.boolean(), // hidden from your partner
   archived: z.boolean(),
   sort_order: z.number().int().min(0).max(10_000),
+  // People (type 'person') only: optional pay-back date and a note
+  due_date: dateStr.nullable(),
+  note: z.string().trim().max(300).nullable(),
 };
 
 const createSchema = z.object({
@@ -22,12 +25,15 @@ const createSchema = z.object({
   opening_balance_cents: fields.opening_balance_cents.default(0),
   is_private: fields.is_private.default(false),
   sort_order: fields.sort_order.default(0),
+  due_date: fields.due_date.default(null),
+  note: fields.note.default(null),
 });
 
 const updateSchema = z.object(fields).partial();
 
 const SELECT = `
-  SELECT a.id, a.name, a.type, a.is_private, a.archived, a.sort_order,
+  SELECT a.id, a.name, a.type, a.is_private, a.archived, a.sort_order, a.due_date, a.note,
+         a.loan_total_cents, a.loan_installment_cents, a.loan_months, a.loan_first_due,
          a.opening_balance_cents, b.balance_cents, a.created_at, a.updated_at
     FROM accounts a
     JOIN account_balances b ON b.account_id = a.id`;
@@ -65,9 +71,9 @@ export function accountsRouter({ pool, config }) {
   router.post('/', requireOwner, async (req, res) => {
     const body = createSchema.parse(req.body);
     const { rows } = await pool.query(
-      `INSERT INTO accounts (household_id, name, type, opening_balance_cents, is_private, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [req.user.household_id, body.name, body.type, body.opening_balance_cents, body.is_private, body.sort_order],
+      `INSERT INTO accounts (household_id, name, type, opening_balance_cents, is_private, sort_order, due_date, note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [req.user.household_id, body.name, body.type, body.opening_balance_cents, body.is_private, body.sort_order, body.due_date, body.note || null],
     );
     res.status(201).json({ account: serialize(req.user, await fetchAccount(pool, req.user, rows[0].id)) });
   });
@@ -79,10 +85,10 @@ export function accountsRouter({ pool, config }) {
     await pool.query(
       `UPDATE accounts
           SET name = $1, type = $2, opening_balance_cents = $3, is_private = $4,
-              archived = $5, sort_order = $6, updated_at = now()
-        WHERE id = $7 AND household_id = $8`,
+              archived = $5, sort_order = $6, due_date = $7, note = $8, updated_at = now()
+        WHERE id = $9 AND household_id = $10`,
       [next.name, next.type, next.opening_balance_cents, next.is_private, next.archived, next.sort_order,
-        accountId, req.user.household_id],
+        next.due_date, next.note || null, accountId, req.user.household_id],
     );
     res.json({ account: serialize(req.user, await fetchAccount(pool, req.user, accountId)) });
   });

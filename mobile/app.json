@@ -1,20 +1,18 @@
 {
   "expo": {
-    "name": "Finance Tracker",
+    "name": "Ipon",
     "slug": "finance-tracker",
     "scheme": "financetracker",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/ipon-icon-1024.png",
     "userInterfaceStyle": "automatic",
     "android": {
       "package": "com.financetracker.app",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#0F766E",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/ipon-adaptive-foreground-1024.png",
+        "backgroundColor": "#0B6B4F"
       }
     },
     "plugins": [
@@ -24,9 +22,28 @@
       [
         "expo-notifications",
         {
-          "color": "#1C1C22"
+          "icon": "./assets/ipon-splash-mark-white-512.png",
+          "color": "#0B6B4F"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/ipon-splash-mark-white-512.png",
+          "imageWidth": 160,
+          "backgroundColor": "#0B6B4F"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "b7f831c7-05d9-4a83-a158-d3ccfb3b8595"
+      }
+    }
   }
 }

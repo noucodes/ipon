@@ -2,8 +2,8 @@
 //   Log mode      : pick account → type amount → swipe LEFT = expense, RIGHT = income
 //   Transfer mode : pick From / To like recipients → amount → slide to transfer
 // Then a full-colour confirmation where you can tag a category.
-import { useEffect, useMemo, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as SecureStore from 'expo-secure-store';
@@ -19,22 +19,31 @@ import { useAccounts, useCategories, useFeePresets, useFeeSuggestion, refreshMon
 import { enqueue, isRetryable, updateQueued } from '../lib/outbox';
 import { centsToInput, friendlyDate, ACCOUNT_TYPE_ICONS } from '../lib/format';
 import { matchAccount } from '../lib/detections';
+import { useAuth } from '../lib/auth';
+import { useRouter } from 'expo-router';
 import { detection as detectionStore } from '../../modules/wallet-shortcuts';
 import { useTheme, space, radius } from '../theme';
 
 const LAST_ACCOUNT_KEY = 'last_account_id';
 
-export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, source = null, detectionId = null, onClose }) {
+export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, source = null, detectionId = null, initialFrom = null, initialTo = null, recurringId = null, onClose }) {
+  const router = useRouter();
   const t = useTheme();
+  const { isOwner } = useAuth();
   const accountsQ = useAccounts();
-  const accounts = useMemo(() => accountsQ.data ?? [], [accountsQ.data]);
+  // Real accounts first, then people (utang) — people only make sense for transfers.
+  const accounts = useMemo(() => {
+    const all = accountsQ.data ?? [];
+    return [...all.filter((a) => a.type !== 'person'), ...all.filter((a) => a.type === 'person')];
+  }, [accountsQ.data]);
+  const moneyAccounts = useMemo(() => accounts.filter((a) => a.type !== 'person'), [accounts]);
   const presets = useFeePresets().data ?? [];
 
   const [mode, setMode] = useState(initialType === 'transfer' ? 'transfer' : 'log');
   const amount = useAmountInput(initialAmountCents);
   const [detected, setDetected] = useState(source ? { source, type: initialType, id: detectionId } : null);
-  const [accountId, setAccountId] = useState(null);
-  const [toAccountId, setToAccountId] = useState(null);
+  const [accountId, setAccountId] = useState(initialFrom);
+  const [toAccountId, setToAccountId] = useState(initialTo);
   const [fee, setFee] = useState(null); // null = use suggestion; otherwise { cents, paidBy }
   const [note, setNote] = useState('');
   const [editingNote, setEditingNote] = useState(false);
@@ -45,16 +54,34 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const resultRef = useRef(null);
+  const pickedCategory = useRef(null);
+  const showResult = (r) => {
+    resultRef.current = r;
+    setResult(r);
+  };
 
   // Pre-select: the account matching a detected alert (e.g. "GCash"), else the one used last time
   useEffect(() => {
     if (accountId || !accounts.length) return;
     const fromSource = matchAccount(accounts, source);
-    if (fromSource) return setAccountId(fromSource.id);
+    // Loan payment alert (e.g. BillEase): the loan is where the money goes; pay from your usual account.
+    if (fromSource && initialType === 'transfer') {
+      if (!toAccountId) setToAccountId(fromSource.id);
+    } else if (fromSource) return setAccountId(fromSource.id);
     SecureStore.getItemAsync(LAST_ACCOUNT_KEY).then((last) => {
-      setAccountId((accounts.find((a) => a.id === last) ?? accounts[0]).id);
+      const usable = moneyAccounts.filter((x) => x.id !== fromSource?.id);
+      const pool = usable.length ? usable : accounts;
+      setAccountId((pool.find((a) => a.id === last) ?? pool[0]).id);
     });
-  }, [accounts, accountId]);
+  }, [accounts, moneyAccounts, accountId]);
+
+  // Expense / Income can't be on a person; switch to a real account.
+  useEffect(() => {
+    if (mode === 'log' && accountId && accounts.find((a) => a.id === accountId)?.type === 'person') {
+      setAccountId(moneyAccounts[0]?.id ?? null);
+    }
+  }, [mode, accountId, accounts, moneyAccounts]);
 
   const suggestion = useFeeSuggestion(mode === 'transfer' ? accountId : null, toAccountId);
   const effectiveFee = fee ?? {
@@ -93,18 +120,27 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
       occurred_on: date,
       note: note.trim() || null,
     };
+    // Show the confirmation immediately; the save finishes in the background.
+    pickedCategory.current = null;
+    const shown = { kind, cents, clientId: body.client_id, pending: true };
+    showResult(shown);
     setBusy(true);
     try {
       const { transaction } = await api.post('/transactions', body, { timeoutMs: 15_000 });
-      setResult({ kind, cents, id: transaction.id, clientId: body.client_id, queued: false });
+      showResult({ ...shown, pending: false, id: transaction.id });
+      // A category tapped while the save was still in flight
+      if (pickedCategory.current) await api.patch(`/transactions/${transaction.id}`, { category_id: pickedCategory.current.id }).catch(() => {});
       refreshMoney();
     } catch (err) {
       if (!isRetryable(err)) {
+        // Rejected by the server: take the confirmation away and explain on the card.
+        if (resultRef.current?.clientId === body.client_id) showResult(null);
         setError(err.message);
         return;
       }
-      await enqueue(body, { account_name: account.name, to_account_name: toAccount?.name });
-      setResult({ kind, cents, clientId: body.client_id, queued: true });
+      const c = pickedCategory.current;
+      await enqueue(c ? { ...body, category_id: c.id } : body, { account_name: account.name, to_account_name: toAccount?.name, category_name: c?.name });
+      if (resultRef.current?.clientId === body.client_id) showResult({ ...shown, pending: false, queued: true });
     } finally {
       setBusy(false);
     }
@@ -115,8 +151,28 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
     }
   }
 
+  /** Category tapped on the confirmation screen; works before, during or after the save. */
+  async function pickCategory(c) {
+    pickedCategory.current = c;
+    const r = resultRef.current;
+    if (!r || r.pending) return; // applied when the save finishes
+    if (r.queued) await updateQueued(r.clientId, { category_id: c.id }, { category_name: c.name });
+    else {
+      await api.patch(`/transactions/${r.id}`, { category_id: c.id });
+      refreshMoney();
+    }
+  }
+
+  /** From the confirmation screen: add a payslip breakdown to the income just saved. */
+  function openPayslip(categoryName) {
+    const r = resultRef.current;
+    if (!r?.id) return;
+    const type = categoryName === 'Part-time' ? 'part_time' : categoryName === 'Freelance' ? 'project' : 'salary';
+    router.replace(`/payslip/new?transaction=${r.id}&net=${r.cents}&type=${type}${recurringId ? `&recurring=${recurringId}` : ''}`);
+  }
+
   function addAnother() {
-    setResult(null);
+    showResult(null);
     amount.reset();
     setNote('');
     setFee(null);
@@ -161,7 +217,7 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: t.primarySoft, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6 }}>
             <Ionicons name="sparkles" size={14} color={t.text} />
             <Text style={{ color: t.text, fontWeight: '700', fontSize: 13 }}>
-              From your {detected.source} alert · {detected.type === 'income' ? 'swipe right for income' : 'swipe left for expense'}
+              From your {detected.source} alert · {detected.type === 'transfer' ? 'slide to record the payment' : detected.type === 'income' ? 'swipe right for income' : 'swipe left for expense'}
             </Text>
           </View>
         )}
@@ -252,10 +308,10 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
         />
       )}
 
-      <AccountSheet visible={accountSheet} accounts={accounts} selected={accountId} onClose={() => setAccountSheet(false)} onSelect={(id) => { setAccountId(id); setAccountSheet(false); }} />
+      <AccountSheet visible={accountSheet} accounts={moneyAccounts} selected={accountId} onClose={() => setAccountSheet(false)} onSelect={(id) => { setAccountId(id); setAccountSheet(false); }} />
       <FeeSheet visible={feeSheet} value={effectiveFee} presets={presets} onClose={() => setFeeSheet(false)} onChange={(v) => { setFee(v); setFeeSheet(false); }} />
 
-      {result && <Success result={result} account={account} toAccount={toAccount} fee={effectiveFee} onClose={onClose} onAnother={addAnother} />}
+      {result && <Success result={result} account={account} toAccount={toAccount} fee={effectiveFee} onClose={onClose} onAnother={addAnother} onPickCategory={pickCategory} onPayslip={isOwner ? openPayslip : null} />}
     </SafeAreaView>
   );
 }
@@ -326,10 +382,15 @@ function FeeSheet({ visible, value, presets, onChange, onClose }) {
   );
 }
 
-function Success({ result, account, toAccount, fee, onClose, onAnother }) {
+function Success({ result, account, toAccount, fee, onClose, onAnother, onPickCategory, onPayslip }) {
   const t = useTheme();
   const categoriesQ = useCategories();
   const [picked, setPicked] = useState(null);
+  // Fade + scale in quickly so it feels instant
+  const appear = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(appear, { toValue: 1, duration: 140, useNativeDriver: true }).start();
+  }, [appear]);
   const color = result.kind === 'income' ? t.income : result.kind === 'expense' ? t.expense : t.transfer;
   const caption = result.kind === 'transfer'
     ? `${account?.name} → ${toAccount?.name}${fee.cents ? ` · fee ${formatPHP(fee.cents)}` : ''}`
@@ -339,18 +400,15 @@ function Success({ result, account, toAccount, fee, onClose, onAnother }) {
   async function pick(c) {
     setPicked(c.id);
     try {
-      if (result.queued) await updateQueued(result.clientId, { category_id: c.id }, { category_name: c.name });
-      else {
-        await api.patch(`/transactions/${result.id}`, { category_id: c.id });
-        refreshMoney();
-      }
+      await onPickCategory(c);
     } catch {
       setPicked(null);
     }
   }
 
   return (
-    <Pressable onPress={onClose} accessibilityLabel="Saved. Tap anywhere to close" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: color, padding: space.xl, justifyContent: 'center', gap: space.md }}>
+    <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: appear, transform: [{ scale: appear.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }}>
+    <Pressable onPress={onClose} accessibilityLabel="Saved. Tap anywhere to close" style={{ flex: 1, backgroundColor: color, padding: space.xl, justifyContent: 'center', gap: space.md }}>
       <View style={{ alignItems: 'center', gap: space.sm }}>
         <Ionicons name={result.queued ? 'cloud-offline-outline' : 'checkmark'} size={64} color="#fff" />
         <BigAmount cents={result.cents} size={46} color="#fff" />
@@ -375,6 +433,21 @@ function Success({ result, account, toAccount, fee, onClose, onAnother }) {
         </View>
       )}
 
+      {/* Salary / part-time / project: add the payslip breakdown to this income */}
+      {result.kind === 'income' && onPayslip && !result.queued && (
+        <Pressable
+          onPress={() => onPayslip(categories.find((c) => c.id === picked)?.name)}
+          disabled={!result.id}
+          style={{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: space.md, paddingVertical: 12, paddingHorizontal: 18, borderRadius: radius.pill, backgroundColor: '#fff', opacity: result.id ? 1 : 0.6 }}
+        >
+          <Ionicons name="document-text-outline" size={18} color={color} />
+          <Text style={{ color, fontWeight: '800' }}>{result.id ? 'Add payslip details' : 'Saving…'}</Text>
+        </Pressable>
+      )}
+      {result.kind === 'income' && onPayslip && !result.queued && (
+        <Text style={{ color: '#fff', opacity: 0.8, fontSize: 12, textAlign: 'center' }}>Salary? Add SSS, PhilHealth, Pag-IBIG, tax or lates</Text>
+      )}
+
       <View style={{ alignItems: 'center', gap: space.md, marginTop: space.lg }}>
         <Pressable onPress={onAnother} style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: radius.pill, borderWidth: 1.5, borderColor: '#fff' }}>
           <Text style={{ color: '#fff', fontWeight: '800' }}>+ Add another</Text>
@@ -382,5 +455,6 @@ function Success({ result, account, toAccount, fee, onClose, onAnother }) {
         <Text style={{ color: '#fff', opacity: 0.75, fontSize: 12 }}>Tap anywhere to close</Text>
       </View>
     </Pressable>
+    </Animated.View>
   );
 }

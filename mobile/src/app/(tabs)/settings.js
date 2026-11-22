@@ -1,23 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Share, Text, View } from 'react-native';
 import { useMutation } from '@tanstack/react-query';
-import * as SecureStore from 'expo-secure-store';
-import { toCents } from '@ft/shared';
-import { Body, Button, Card, ErrorText, Field, IconButton, Label, Screen, Segmented, Title, ToggleRow } from '../../components/ui';
-import { useAuth } from '../../lib/auth';
-import { useFeePresets, useHousehold, useInvites, useSummary, api } from '../../lib/queries';
-import { useOutbox } from '../../lib/outbox';
-import { WIDGET_SHOW_BALANCE_KEY, pushWidget } from '../../lib/background';
-import * as Shortcuts from '../../../modules/wallet-shortcuts';
+import { useRouter } from 'expo-router';
+import { IconButton, Row, Screen, Section, Title } from '../../components/ui';
 import { SmartFeatures } from '../../components/SmartFeatures';
+import { useAuth } from '../../lib/auth';
+import { useHousehold, useInvites, api } from '../../lib/queries';
+import { useOutbox } from '../../lib/outbox';
 import { queryClient } from '../../lib/queryClient';
 import { API_URL } from '../../lib/config';
-import { formatPHP } from '../../lib/format';
-import { useTheme, space } from '../../theme';
+import * as Shortcuts from '../../../modules/wallet-shortcuts';
+import { useTheme, space, radius } from '../../theme';
 
 export default function Settings() {
-  const { user, signOut } = useAuth();
-  const isOwner = user?.role === 'owner';
+  const t = useTheme();
+  const router = useRouter();
+  const { user, signOut, isOwner } = useAuth();
   const outbox = useOutbox();
 
   const confirmSignOut = () => {
@@ -29,51 +27,57 @@ export default function Settings() {
     );
   };
 
+  const signOutEverywhere = () => Alert.alert('Sign out everywhere?', 'Use this if a phone was lost. You will need to sign in again.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Sign out all', style: 'destructive', onPress: async () => { await api.post('/auth/logout-all').catch(() => {}); signOut(); } },
+  ]);
+
   return (
-    <Screen>
+    <Screen contentStyle={{ gap: space.xl }}>
       <Title>Settings</Title>
+
+      {/* Profile */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: t.card, borderRadius: radius.lg, padding: space.lg }}>
+        <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: t.hero, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 22, fontWeight: '800', color: t.heroText }}>{(user?.display_name ?? '?').slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 17, fontWeight: '800', color: t.text }} numberOfLines={1}>{user?.display_name}</Text>
+          <Text style={{ fontSize: 13, color: t.muted }} numberOfLines={1}>{user?.email}</Text>
+        </View>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: t.muted }}>{isOwner ? 'Owner' : 'Partner'}</Text>
+      </View>
+
+      {isOwner && (
+        <Section>
+          <Row icon="rocket-outline" iconColor="#0B6B4F" label="Set up my finances" hint="Banks, cards, loans, utang, salary & bills" onPress={() => router.push('/setup')} />
+          <Row icon="document-text-outline" iconColor="#2F9E55" label="Payslips & deductions" hint="SSS, PhilHealth, Pag-IBIG, tax, lates" onPress={() => router.push('/payslips')} />
+        </Section>
+      )}
+
       <SmartFeatures />
       <PhoneShortcuts />
-      <Household isOwner={isOwner} />
-      {isOwner && <Invites />}
-      <FeePresets isOwner={isOwner} />
-      <Card>
-        <Label>Account</Label>
-        <Body>{user?.display_name}</Body>
-        <Body muted>{user?.email}</Body>
-        <Button title="Sign out" variant="secondary" icon="log-out-outline" onPress={confirmSignOut} style={{ marginTop: space.sm }} />
-        <Button
-          title="Sign out on all devices"
-          variant="danger"
-          onPress={() => Alert.alert('Sign out everywhere?', 'Use this if a phone was lost. You will need to sign in again.', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Sign out all', style: 'destructive', onPress: async () => { await api.post('/auth/logout-all').catch(() => {}); signOut(); } },
-          ])}
-        />
-      </Card>
-      <Body muted style={{ fontSize: 12, textAlign: 'center' }}>Server: {API_URL}</Body>
+      <WalletSection isOwner={isOwner} />
+
+      <Section title="Account">
+        <Row icon="log-out-outline" iconColor="#6E6E78" label="Sign out" onPress={confirmSignOut} chevron={false} />
+        <Row icon="phone-portrait-outline" danger label="Sign out on all devices" hint="If a phone was lost" onPress={signOutEverywhere} chevron={false} />
+        {isOwner && <Row icon="refresh-circle-outline" danger label="Reset my data" hint="Delete everything and start over" onPress={() => router.push('/reset')} />}
+      </Section>
+
+      {__DEV__ && <Text style={{ fontSize: 11, color: t.muted, textAlign: 'center' }}>Server: {API_URL}</Text>}
     </Screen>
   );
 }
 
 function PhoneShortcuts() {
-  const [showBalance, setShowBalance] = useState(true);
   const [note, setNote] = useState(null);
-  const summary = useSummary();
-  const household = useHousehold();
-  const { isOwner } = useAuth();
-  const ownerName = household.data?.members.find((m) => m.role === 'owner')?.display_name;
-
-  useEffect(() => {
-    SecureStore.getItemAsync(WIDGET_SHOW_BALANCE_KEY).then((v) => setShowBalance(v !== 'false'));
-  }, []);
 
   if (!Shortcuts.isAvailable) {
     return (
-      <Card>
-        <Label>Phone shortcuts</Label>
-        <Body muted>The widget, quick settings tile and app icon shortcuts work in the installed app, not in Expo Go. Double-tap on Home still works here.</Body>
-      </Card>
+      <Section title="Phone shortcuts" footer="The widget, tile and app icon shortcuts work in the installed app, not in Expo Go.">
+        <Row icon="hand-left-outline" iconColor="#4F63E8" label="Double-tap to add" hint="On Home or Activity" />
+      </Section>
     );
   }
 
@@ -83,62 +87,31 @@ function PhoneShortcuts() {
       [Shortcuts.TILE_RESULT.ADDED]: 'Tile added. Pull down your notification panel to use it.',
       [Shortcuts.TILE_RESULT.ALREADY_ADDED]: 'The tile is already in your quick settings.',
       [Shortcuts.TILE_RESULT.NOT_ADDED]: 'Not added.',
-    }[r] ?? 'Your phone did not allow adding it automatically. Pull down the notification panel twice, tap the pencil (edit) icon, and drag "Add transaction" into your tiles.');
+    }[r] ?? 'Pull down the notification panel twice, tap the pencil (edit) icon, and drag "Add transaction" into your tiles.');
   }
 
   function addWidget() {
-    const ok = Shortcuts.requestPinWidget();
-    setNote(ok
+    setNote(Shortcuts.requestPinWidget()
       ? 'Follow the prompt to place the widget.'
-      : 'Long-press an empty spot on your home screen → Widgets → Finance Tracker → "Wallet balance".');
+      : 'Long-press an empty spot on your home screen → Widgets → Ipon → "Quick add".');
   }
 
   return (
-    <Card>
-      <Label>Phone shortcuts</Label>
-      <Body muted>
-        Quick ways to log a transaction: double-tap on Home or Activity, long-press the app icon (Add expense / Add income / Transfer),
-        the quick settings tile, or the home-screen widget.
-      </Body>
-      <Button title="Add tile to quick settings" variant="secondary" icon="grid-outline" onPress={addTile} />
-      <Button title="Add widget to home screen" variant="secondary" icon="apps-outline" onPress={addWidget} />
-      <ToggleRow
-        label="Show balance on widget"
-        hint="Turn off to show ₱ •••••• instead"
-        value={showBalance}
-        onValueChange={async (v) => {
-          setShowBalance(v);
-          await SecureStore.setItemAsync(WIDGET_SHOW_BALANCE_KEY, v ? 'true' : 'false');
-          await pushWidget(summary.data, ownerName, isOwner);
-        }}
-      />
-      {note && <Body muted style={{ fontSize: 13 }}>{note}</Body>}
-    </Card>
+    <Section
+      title="Phone shortcuts"
+      footer={note ?? 'You can also double-tap on Home, or long-press the app icon for Add expense / Add income / Transfer.'}
+    >
+      <Row icon="grid-outline" iconColor="#4F63E8" label="Add tile to quick settings" hint="Log from the pull-down panel" onPress={addTile} />
+      <Row icon="apps-outline" iconColor="#0EA5E9" label="Add widget to home screen" hint="Expense · Income · Transfer buttons" onPress={addWidget} />
+    </Section>
   );
 }
 
-function Household({ isOwner }) {
-  const q = useHousehold();
+function WalletSection({ isOwner }) {
   const t = useTheme();
-  return (
-    <Card>
-      <Label>Wallet access</Label>
-      <Body style={{ fontWeight: '700', fontSize: 17 }}>{q.data?.household.name ?? '…'}</Body>
-      {q.data?.members.map((m) => (
-        <View key={m.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Body>{m.display_name}</Body>
-          <Text style={{ color: t.muted }}>{m.role === 'owner' ? 'Owner' : 'Partner (view + log)'}</Text>
-        </View>
-      ))}
-      {!isOwner && <Body muted style={{ fontSize: 13 }}>You can view this wallet and log entries. Only the owner can change accounts and settings.</Body>}
-      <ErrorText error={q.error} />
-    </Card>
-  );
-}
-
-function Invites() {
-  const t = useTheme();
-  const q = useInvites(true);
+  const router = useRouter();
+  const household = useHousehold();
+  const invites = useInvites(isOwner);
   const create = useMutation({
     mutationFn: () => api.post('/household/invites'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites'] }),
@@ -148,59 +121,43 @@ function Invites() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites'] }),
   });
   const share = (code) =>
-    Share.share({ message: `View my wallet in Finance Tracker: open the app, tap "Create account" → "Partner", and enter code ${code}` });
+    Share.share({ message: `View my wallet in Ipon: open the app, tap "Create account" → "Partner", and enter code ${code}` });
 
   return (
-    <Card>
-      <Label>Invite partner</Label>
-      <Body muted>Let your partner see your wallet (except private accounts) and log entries. Create a code and send it to them: it works once and expires in 7 days.</Body>
-      {(q.data ?? []).map((inv) => (
-        <View key={inv.id} style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-          <Text selectable style={{ flex: 1, fontSize: 24, fontWeight: '800', letterSpacing: 2, color: t.text }}>{inv.code}</Text>
-          <IconButton icon="share-social-outline" label="Share code" onPress={() => share(inv.code)} />
-          <IconButton icon="close-circle-outline" label="Cancel code" color={t.danger} onPress={() => cancel.mutate(inv.id)} />
-        </View>
+    <Section
+      title={household.data?.household.name ? `Wallet · ${household.data.household.name}` : 'Wallet'}
+      footer={isOwner
+        ? 'Your partner can see your wallet (except private accounts) and log entries. Invite codes work once and expire in 7 days.'
+        : 'You can view this wallet and log entries. Only the owner can change accounts and settings.'}
+    >
+      {(household.data?.members ?? []).map((m) => (
+        <Row
+          key={m.id}
+          icon={m.role === 'owner' ? 'person' : 'people'}
+          iconColor={m.role === 'owner' ? '#0B6B4F' : '#F59E0B'}
+          label={m.display_name}
+          hint={m.role === 'owner' ? 'Owner' : 'Partner · view & log'}
+        />
       ))}
-      <ErrorText error={create.error ?? q.error} />
-      <Button title="Create invite code" variant="secondary" icon="person-add-outline" onPress={() => create.mutate()} loading={create.isPending} />
-    </Card>
-  );
-}
-
-function FeePresets({ isOwner }) {
-  const t = useTheme();
-  const q = useFeePresets();
-  const [name, setName] = useState('');
-  const [fee, setFee] = useState('');
-  const [paidBy, setPaidBy] = useState('sender');
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['feePresets'] });
-  const add = useMutation({ mutationFn: (body) => api.post('/fee-presets', body), onSuccess: () => { setName(''); setFee(''); refresh(); } });
-  const remove = useMutation({ mutationFn: (id) => api.del(`/fee-presets/${id}`), onSuccess: refresh });
-
-  return (
-    <Card>
-      <Label>Transfer fee presets</Label>
-      <Body muted>Quick picks when logging a transfer. The app also remembers the last fee you used between two accounts.</Body>
-      {(q.data ?? []).map((p) => (
-        <View key={p.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Body style={{ flex: 1 }}>{p.name} <Body muted>· {formatPHP(p.fee_cents)} · {p.fee_paid_by === 'sender' ? 'sender pays' : 'receiver pays'}</Body></Body>
-          {isOwner && <IconButton icon="trash-outline" label={`Delete ${p.name}`} color={t.danger} onPress={() => remove.mutate(p.id)} />}
-        </View>
+      {isOwner && (invites.data ?? []).map((inv) => (
+        <Row
+          key={inv.id}
+          icon="key-outline"
+          iconColor="#A855F7"
+          label={inv.code}
+          hint="Invite code · tap share to send"
+          right={(
+            <View style={{ flexDirection: 'row' }}>
+              <IconButton icon="share-social-outline" label="Share code" color={t.text} onPress={() => share(inv.code)} />
+              <IconButton icon="close-circle-outline" label="Cancel code" color={t.danger} onPress={() => cancel.mutate(inv.id)} />
+            </View>
+          )}
+        />
       ))}
-      {isOwner && (<>
-      <Field value={name} onChangeText={setName} placeholder="Name, e.g. GCash to BPI" maxLength={40} />
-      <Field value={fee} onChangeText={(v) => setFee(v.replace(/[^0-9.,]/g, ''))} placeholder="Fee ₱" keyboardType="decimal-pad" />
-      <Segmented value={paidBy} onChange={setPaidBy} options={[{ value: 'sender', label: 'Sender pays' }, { value: 'receiver', label: 'Receiver pays' }]} />
-      <ErrorText error={add.error} />
-      <Button
-        title="Add preset"
-        variant="secondary"
-        icon="add"
-        loading={add.isPending}
-        disabled={!name.trim() || toCents(fee || 'x') === null}
-        onPress={() => add.mutate({ name: name.trim(), fee_cents: toCents(fee), fee_paid_by: paidBy })}
-      />
-      </>)}
-    </Card>
+      {isOwner && (
+        <Row icon="person-add-outline" iconColor="#2F9E55" label={create.isPending ? 'Creating…' : 'Invite partner'} onPress={() => create.mutate()} chevron={false} />
+      )}
+      <Row icon="pricetag-outline" iconColor="#E0533D" label="Transfer fee presets" hint="InstaPay, PESONet…" onPress={() => router.push('/fees')} />
+    </Section>
   );
 }

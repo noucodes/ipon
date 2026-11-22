@@ -26,7 +26,10 @@ const registerSchema = z.object({
 const loginSchema = z.object({ email, password: z.string().min(1).max(128) });
 
 function publicUser(u) {
-  return { id: u.id, email: u.email, display_name: u.display_name, role: u.role, household_id: u.household_id };
+  return {
+    id: u.id, email: u.email, display_name: u.display_name, role: u.role, household_id: u.household_id,
+    onboarded: Boolean(u.onboarded_at), // finished or skipped the setup guide
+  };
 }
 
 export function authRouter({ pool, config }) {
@@ -78,7 +81,7 @@ export function authRouter({ pool, config }) {
       const { rows } = await client.query(
         `INSERT INTO users (household_id, email, password_hash, display_name, role)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, household_id, email, display_name, role, token_version`,
+         RETURNING id, household_id, email, display_name, role, token_version, onboarded_at`,
         [householdId, body.email, passwordHash, body.display_name, role],
       );
 
@@ -94,7 +97,7 @@ export function authRouter({ pool, config }) {
   router.post('/login', limiter, async (req, res) => {
     const body = loginSchema.parse(req.body);
     const { rows } = await pool.query(
-      `SELECT id, household_id, email, display_name, role, token_version, password_hash
+      `SELECT id, household_id, email, display_name, role, token_version, onboarded_at, password_hash
          FROM users WHERE lower(email) = $1`,
       [body.email],
     );
@@ -109,6 +112,17 @@ export function authRouter({ pool, config }) {
 
   router.get('/me', auth, (req, res) => {
     res.json({ user: publicUser(req.user) });
+  });
+
+  // Setup guide finished or skipped: don't show it again (on any device).
+  router.post('/onboarded', auth, async (req, res) => {
+    const { done } = z.object({ done: z.boolean().default(true) }).parse(req.body ?? {});
+    const { rows } = await pool.query(
+      `UPDATE users SET onboarded_at = CASE WHEN $2 THEN now() ELSE NULL END WHERE id = $1
+       RETURNING id, household_id, email, display_name, role, onboarded_at`,
+      [req.user.id, done],
+    );
+    res.json({ user: publicUser(rows[0]) });
   });
 
   // Signs out every device (e.g. a lost phone) by invalidating all existing tokens.

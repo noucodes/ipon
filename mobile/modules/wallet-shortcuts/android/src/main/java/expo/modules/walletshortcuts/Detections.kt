@@ -94,13 +94,20 @@ object Detections {
     val cents = item.getLong("amount_cents")
     val source = item.getString("source")
     val amount = String.format(Locale.US, "₱%,.2f", cents / 100.0)
-    val path = "add?type=$type&amount=$cents&source=${Uri.encode(source)}&detection=$id"
+    // Loan payments open Transfer with the loan account (matched by name) as "To".
+    val route = if (type == "loan_payment") "transfer" else type
+    val path = "add?type=$route&amount=$cents&source=${Uri.encode(source)}&detection=$id"
+    val what = when (type) {
+      "income" -> "income"
+      "loan_payment" -> "$source payment"
+      else -> "expense"
+    }
 
     @Suppress("DEPRECATION")
     val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, CHANNEL) else Notification.Builder(ctx)
     val notification = builder
       .setSmallIcon(R.drawable.ic_tile_add)
-      .setContentTitle("Log $amount ${if (type == "income") "income" else "expense"}?")
+      .setContentTitle("Log $amount $what?")
       .setContentText("$source · tap to add it to your wallet")
       .setStyle(Notification.BigTextStyle().bigText(item.optString("text")))
       .setAutoCancel(true)

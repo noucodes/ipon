@@ -9,6 +9,7 @@ export const TYPE_COLORS = {
   cash: '#2F9E55',
   credit_card: '#E0533D',
   savings: '#A855F7',
+  person: '#F59E0B',
 };
 
 /** Round account "contact" like a recipient avatar. */

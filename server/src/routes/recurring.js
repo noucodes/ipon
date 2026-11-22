@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { FREQUENCIES, RECURRING_KINDS, monthlyEquivalentCents } from '@ft/shared';
-import { notFound } from '../lib/errors.js';
+import { FREQUENCIES, RECURRING_KINDS, monthlyEquivalentCents, nextCustomDate, todayInManila } from '@ft/shared';
+import { badRequest, notFound } from '../lib/errors.js';
 import { id, positiveCents, dateStr, parseId } from '../lib/validators.js';
 import { visibleSql, isOwner, requireOwner, getVisibleAccounts, assertCategory } from '../lib/access.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -16,6 +16,8 @@ const fields = {
   category_id: id.nullable(),
   next_date: dateStr.nullable(),
   active: z.boolean(),
+  // custom_days only: e.g. [13, 16] or [15, 31] (31 = last day of the month)
+  days_of_month: z.array(z.number().int().min(1).max(31)).min(1).max(10).nullable(),
 };
 
 const createSchema = z.object({
@@ -24,24 +26,54 @@ const createSchema = z.object({
   category_id: fields.category_id.default(null),
   next_date: fields.next_date.default(null),
   active: fields.active.default(true),
+  days_of_month: fields.days_of_month.default(null),
 });
 
 // Hidden from a partner if it's tied to a private account. $role param = viewer's role.
 export const RECURRING_SELECT = (roleParam) => `
   SELECT r.id, r.kind, r.name, r.amount_cents, r.frequency,
          r.account_id, a.name AS account_name, r.category_id, c.name AS category_name,
-         r.next_date, r.active, r.created_at, r.updated_at
+         r.next_date, r.active, r.days_of_month, r.created_at, r.updated_at,
+         r.loan_account_id, la.name AS loan_account_name, lb.balance_cents AS loan_balance_cents,
+         la.loan_installment_cents, la.loan_months, la.loan_total_cents,
+         -- expected pay = average net of the latest payslips (4 for twice-a-month, else 3)
+         (SELECT round(avg(x.net_cents))::bigint FROM (
+            SELECT p.net_cents FROM payslips p
+              JOIN transactions pt ON pt.id = p.transaction_id AND pt.deleted_at IS NULL
+             WHERE p.recurring_item_id = r.id
+             ORDER BY pt.occurred_on DESC
+             LIMIT CASE WHEN r.frequency = 'semi_monthly' THEN 4 ELSE 3 END) x) AS average_net_cents
     FROM recurring_items r
     LEFT JOIN accounts a ON a.id = r.account_id
+    LEFT JOIN accounts la ON la.id = r.loan_account_id
+    LEFT JOIN account_balances lb ON lb.account_id = r.loan_account_id
     LEFT JOIN categories c ON c.id = r.category_id
-   WHERE (a.id IS NULL OR ${visibleSql('a', roleParam)})`;
+   WHERE (a.id IS NULL OR ${visibleSql('a', roleParam)})
+     AND (la.id IS NULL OR ${visibleSql('la', roleParam)})`;
 
 export function serializeRecurring(user, r) {
   return {
     ...r,
-    monthly_equivalent_cents: monthlyEquivalentCents(r.amount_cents, r.frequency),
+    // Use the payslip average when there is one, so the monthly plan follows real pay
+    expected_cents: r.average_net_cents ?? r.amount_cents,
+    monthly_equivalent_cents: monthlyEquivalentCents(r.average_net_cents ?? r.amount_cents, r.frequency, r.days_of_month),
+    // Linked loan fully paid: stop counting it as a monthly bill / reminding
+    paid_off: r.loan_account_id != null && r.loan_balance_cents >= 0,
     can_edit: isOwner(user),
   };
+}
+
+/** Custom days need at least one day; other schedules don't keep any. Next date defaults to the next one. */
+function normaliseDays(item) {
+  if (item.frequency === 'custom_days') {
+    const days = [...new Set(item.days_of_month ?? [])].sort((a, b) => a - b);
+    if (!days.length) throw badRequest('Pick at least one day of the month', 'days_required');
+    item.days_of_month = days;
+    item.next_date ??= nextCustomDate(days, todayInManila());
+  } else {
+    item.days_of_month = null;
+  }
+  return item;
 }
 
 async function validateRefs(db, user, item) {
@@ -77,12 +109,13 @@ export function recurringRouter({ pool, config }) {
 
   router.post('/', requireOwner, async (req, res) => {
     const item = createSchema.parse(req.body);
+    normaliseDays(item);
     await validateRefs(pool, req.user, item);
     const { rows } = await pool.query(
-      `INSERT INTO recurring_items (household_id, kind, name, amount_cents, frequency, account_id, category_id, next_date, active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      `INSERT INTO recurring_items (household_id, kind, name, amount_cents, frequency, account_id, category_id, next_date, active, days_of_month)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [req.user.household_id, item.kind, item.name, item.amount_cents, item.frequency,
-        item.account_id, item.category_id, item.next_date, item.active],
+        item.account_id, item.category_id, item.next_date, item.active, item.days_of_month],
     );
     res.status(201).json({ item: await fetchOne(req.user, rows[0].id) });
   });
@@ -92,15 +125,15 @@ export function recurringRouter({ pool, config }) {
     const patch = z.object(fields).partial().parse(req.body);
     const current = await fetchOne(req.user, itemId);
     if (patch.kind && patch.kind !== current.kind && patch.category_id === undefined) patch.category_id = null;
-    const next = { ...current, ...patch };
+    const next = normaliseDays({ ...current, ...patch });
     await validateRefs(pool, req.user, next);
     await pool.query(
       `UPDATE recurring_items
           SET kind = $1, name = $2, amount_cents = $3, frequency = $4, account_id = $5,
-              category_id = $6, next_date = $7, active = $8, updated_at = now()
-        WHERE id = $9`,
+              category_id = $6, next_date = $7, active = $8, days_of_month = $9, updated_at = now()
+        WHERE id = $10`,
       [next.kind, next.name, next.amount_cents, next.frequency, next.account_id,
-        next.category_id, next.next_date, next.active, itemId],
+        next.category_id, next.next_date, next.active, next.days_of_month, itemId],
     );
     res.json({ item: await fetchOne(req.user, itemId) });
   });

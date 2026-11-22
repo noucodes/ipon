@@ -71,3 +71,13 @@ export function useMoneyMutation(fn, { extraKeys = [] } = {}) {
 }
 
 export const api = { get, post, patch, del };
+
+// ---------- Payslips ----------
+export const usePayslips = (year) =>
+  useQuery({ queryKey: ['payslips', 'list', year], queryFn: () => get(`/payslips${qs({ year })}`), select: (d) => d.payslips });
+
+export const usePayslipSummary = (year) =>
+  useQuery({ queryKey: ['payslips', 'summary', year], queryFn: () => get(`/payslips/summary${qs({ year })}`) });
+
+export const refreshPayslips = () =>
+  Promise.all(['payslips', 'recurring'].map((k) => queryClient.invalidateQueries({ queryKey: [k] })));
