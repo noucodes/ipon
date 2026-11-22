@@ -94,6 +94,55 @@ test('existing loan: starts at what is owed, no spending recorded this month', a
   assert.equal(missing.body.error, 'remaining_required');
 });
 
+test('someone else used your lending app: they owe you, not your spending', async () => {
+  const juan = (await api('POST', '/accounts', { token: me, body: { name: 'Juan', type: 'person' } })).body.account.id;
+  const before = await summary();
+
+  // SPayLater phone for Juan: ₱6,000 + ₱600 interest, Juan covers the interest
+  const r = await api('POST', '/loans', {
+    token: me,
+    body: { lender: 'SPayLater', kind: 'purchase', principal_cents: 600_000, total_payable_cents: 660_000, months: 6, first_due_date: '2099-04-01', for_person_id: juan },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.account.name, 'SPayLater · for Juan');
+  assert.equal(r.body.account.balance_cents, -660_000); // you owe the lender
+  assert.equal(await bal(juan), 660_000); // Juan owes you everything incl. interest
+  const after = await summary();
+  assert.equal(after.balances.net_worth_cents, before.balances.net_worth_cents); // no loss for you
+  assert.equal(after.month_flow.expense_cents, before.month_flow.expense_cents); // not your spending
+
+  // Juan pays SPayLater directly for one installment, and pays you back ₱1,100 for another
+  const loanId = r.body.account.id;
+  await api('POST', '/transactions', { token: me, body: { client_id: randomUUID(), type: 'transfer', amount_cents: 110_000, account_id: juan, to_account_id: loanId } });
+  await api('POST', '/transactions', { token: me, body: { client_id: randomUUID(), type: 'transfer', amount_cents: 110_000, account_id: juan, to_account_id: acct.GCash } });
+  assert.equal(await bal(juan), 440_000);
+  assert.equal(await bal(loanId), -550_000);
+});
+
+test('someone else, but you cover the interest; and an existing loan someone used', async () => {
+  const maria = (await api('POST', '/accounts', { token: me, body: { name: 'Maria', type: 'person' } })).body.account.id;
+  const before = await summary();
+  const r = await api('POST', '/loans', {
+    token: me,
+    body: { lender: 'GGives', kind: 'purchase', principal_cents: 300_000, total_payable_cents: 330_000, months: 3, first_due_date: '2099-05-01', for_person_id: maria, person_covers_interest: false },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(await bal(maria), 300_000);
+  const after = await summary();
+  assert.equal(after.balances.net_worth_cents, before.balances.net_worth_cents - 30_000); // only the interest is your cost
+
+  const ex = await api('POST', '/loans', {
+    token: me,
+    body: { lender: 'BillEase', kind: 'existing', remaining_cents: 200_000, installment_cents: 100_000, months: 2, first_due_date: '2099-06-01', for_person_id: maria },
+  });
+  assert.equal(ex.status, 201, JSON.stringify(ex.body));
+  assert.equal(ex.body.account.balance_cents, -200_000);
+  assert.equal(await bal(maria), 500_000);
+
+  const notPerson = await api('POST', '/loans', { token: me, body: { lender: 'X', kind: 'purchase', principal_cents: 100, total_payable_cents: 100, months: 1, first_due_date: '2099-01-01', for_person_id: acct.GCash } });
+  assert.equal(notPerson.body.error, 'person_not_found');
+});
+
 test('validation and permissions', async () => {
   const bad = await api('POST', '/loans', { token: me, body: { lender: 'X', kind: 'purchase', principal_cents: 1000, total_payable_cents: 500, months: 2, first_due_date: '2099-01-01' } });
   assert.equal(bad.body.error, 'total_too_small');

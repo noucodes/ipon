@@ -102,6 +102,24 @@ function PersonDetail({ person }) {
         If {person.name} used your credit card, choose Lend and pick your card as "From".
       </Body>
 
+      {/* Lending apps in your name (BillEase, SPayLater, GGives…) */}
+      {isOwner && (
+        <Button
+          title="Used my lending app"
+          variant="secondary"
+          icon="receipt-outline"
+          onPress={() => go(`/loan/new?for=${person.id}`)}
+        />
+      )}
+      {owesYou && (
+        <Button
+          title="Paid my lender directly"
+          variant="secondary"
+          icon="swap-horizontal"
+          onPress={() => go(`/add?type=transfer&from=${person.id}`)}
+        />
+      )}
+
       <ErrorText error={error} />
 
       {isOwner && (

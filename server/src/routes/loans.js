@@ -29,6 +29,9 @@ const loanSchema = z.object({
   occurred_on: dateStr.optional(),
   category_id: id.nullable().optional(), // purchase category (e.g. Shopping)
   to_account_id: id.optional(), // cash loans: where the money went
+  // Someone else borrowed using YOUR lending app: they owe you instead of it being your spending.
+  for_person_id: id.optional(), // a person (utang) account
+  person_covers_interest: z.boolean().default(true), // they also pay you the interest & fees
   is_private: z.boolean().default(false),
 });
 
@@ -46,8 +49,19 @@ export function loansRouter({ pool, config }) {
 
   router.post('/', requireOwner, async (req, res) => {
     const b = loanSchema.parse(req.body);
-    const name = b.label ? `${b.lender} · ${b.label}` : b.lender;
     const user = req.user;
+
+    // Borrowed for someone else: must be one of your People (utang)
+    let person = null;
+    if (b.for_person_id) {
+      const { rows } = await pool.query(
+        `SELECT id, name FROM accounts WHERE id = $1 AND household_id = $2 AND type = 'person'`,
+        [b.for_person_id, user.household_id],
+      );
+      if (!rows[0]) throw badRequest('Choose a person from your People list', 'person_not_found');
+      person = rows[0];
+    }
+    const name = b.label ? `${b.lender} · ${b.label}` : person ? `${b.lender} · for ${person.name}` : b.lender;
 
     // An existing loan: start the account at what you owe now. Nothing is recorded as
     // this month's spending, since the money was spent before you started tracking.
@@ -55,12 +69,19 @@ export function loansRouter({ pool, config }) {
       if (!b.remaining_cents) throw badRequest('Enter how much you still owe', 'remaining_required');
       const installment = b.installment_cents ?? Math.ceil(b.remaining_cents / b.months);
       const accountId = await withTransaction(pool, async (db) => {
+        // For someone else: the loan starts at 0 and the remaining balance moves to what they owe you.
         const { rows: [acct] } = await db.query(
           `INSERT INTO accounts (household_id, name, type, opening_balance_cents, is_private,
                                  loan_total_cents, loan_installment_cents, loan_months, loan_first_due)
            VALUES ($1, $2, 'credit_card', $3, $4, $5, $6, $7, $8) RETURNING id`,
-          [user.household_id, name, -b.remaining_cents, b.is_private, b.remaining_cents, installment, b.months, b.first_due_date],
+          [user.household_id, name, person ? 0 : -b.remaining_cents, b.is_private, b.remaining_cents, installment, b.months, b.first_due_date],
         );
+        if (person) {
+          await createTransaction(db, user, {
+            type: 'transfer', amount_cents: b.remaining_cents, account_id: acct.id, to_account_id: person.id,
+            fee_cents: 0, fee_paid_by: 'sender', note: `Remaining on your ${b.lender} (used by ${person.name})`,
+          });
+        }
         await db.query(
           `INSERT INTO recurring_items (household_id, kind, name, amount_cents, frequency, next_date, loan_account_id)
            VALUES ($1, 'expense', $2, $3, 'monthly', $4, $5)`,
@@ -75,7 +96,7 @@ export function loansRouter({ pool, config }) {
     if (b.total_payable_cents < b.principal_cents) {
       throw badRequest('Total to pay back is less than the amount borrowed', 'total_too_small');
     }
-    if (b.kind === 'cash' && !b.to_account_id) throw badRequest('Choose where the cash went', 'to_account_required');
+    if (b.kind === 'cash' && !b.to_account_id && !person) throw badRequest('Choose where the cash went', 'to_account_required');
     const installment = b.installment_cents ?? Math.ceil(b.total_payable_cents / b.months);
     const occurredOn = b.occurred_on ?? todayInManila();
 
@@ -88,7 +109,14 @@ export function loansRouter({ pool, config }) {
       );
 
       // 2. the purchase or the cash you received
-      if (b.kind === 'purchase') {
+      if (person) {
+        // Someone else used your lending app: the money (or item) went to them, so they owe you.
+        await createTransaction(db, user, {
+          type: 'transfer', amount_cents: b.principal_cents, account_id: acct.id, to_account_id: person.id,
+          fee_cents: 0, fee_paid_by: 'sender', occurred_on: occurredOn,
+          note: `${b.label ? `${b.label} · ` : ''}via your ${b.lender}`,
+        });
+      } else if (b.kind === 'purchase') {
         await createTransaction(db, user, {
           type: 'expense', amount_cents: b.principal_cents, account_id: acct.id,
           category_id: b.category_id ?? null, occurred_on: occurredOn,
@@ -103,7 +131,13 @@ export function loansRouter({ pool, config }) {
 
       // 3. interest & fees
       const interest = b.total_payable_cents - b.principal_cents;
-      if (interest > 0) {
+      if (interest > 0 && person && b.person_covers_interest) {
+        // They pay the interest too: add it to what they owe you, not to your spending
+        await createTransaction(db, user, {
+          type: 'transfer', amount_cents: interest, account_id: acct.id, to_account_id: person.id,
+          fee_cents: 0, fee_paid_by: 'sender', occurred_on: occurredOn, note: `${b.lender} interest & fees`,
+        });
+      } else if (interest > 0) {
         const { rows: [cat] } = await db.query(
           `SELECT id FROM categories WHERE household_id = $1 AND kind = 'expense' AND lower(name) = 'interest & fees'`,
           [user.household_id],

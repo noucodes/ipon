@@ -28,7 +28,9 @@ function LoanForm() {
   const router = useRouter();
   // /loan/new?kind=existing&back=1 (from the setup guide: come back to it afterwards)
   const params = useLocalSearchParams();
-  const accounts = (useAccounts().data ?? []).filter((a) => a.type !== 'person' && a.type !== 'credit_card' && !a.archived);
+  const allAccounts = useAccounts().data ?? [];
+  const accounts = allAccounts.filter((a) => a.type !== 'person' && a.type !== 'credit_card' && !a.archived);
+  const people = allAccounts.filter((a) => a.type === 'person' && !a.archived);
   const categories = (useCategories().data ?? []).filter((c) => c.kind === 'expense' && !c.archived && !c.is_system);
 
   const [lender, setLender] = useState('BillEase');
@@ -46,6 +48,12 @@ function LoanForm() {
   const [categoryId, setCategoryId] = useState(null);
   const [toAccountId, setToAccountId] = useState(null);
   const [isPrivate, setIsPrivate] = useState(false);
+  // Someone else borrowed using your lending app (/loan/new?for=<personId>)
+  const [forWho, setForWho] = useState(typeof params.for === 'string' ? 'other' : 'me');
+  const [personId, setPersonId] = useState(typeof params.for === 'string' ? params.for : null);
+  const [newPerson, setNewPerson] = useState('');
+  const [coversInterest, setCoversInterest] = useState(true);
+  const forOther = forWho === 'other';
   const [error, setError] = useState(null);
 
   const existing = kind === 'existing';
@@ -67,13 +75,22 @@ function LoanForm() {
     return `${monthCount} payments of ${formatPHP(installmentCents)} · interest & fees ${formatPHP(interest)}${interest ? ` (${rate.toFixed(1)}%)` : ''}`;
   }, [principalCents, monthCount, installmentCents, interest, rate, existing, remainingCents]);
 
+  /** The chosen person, or a new one created from the typed name. */
+  async function personIdOrCreate() {
+    if (personId) return personId;
+    const { account } = await api.post('/accounts', { name: newPerson.trim(), type: 'person' });
+    setPersonId(account.id);
+    return account.id;
+  }
+
   async function onSave() {
     setError(null);
     if (!lenderName) return setError({ message: 'Enter the lender name' });
     if (!principalCents) return setError({ message: existing ? 'Enter how much you still owe' : kind === 'purchase' ? 'Enter the price' : 'Enter how much you received' });
     if (totalCents < principalCents) return setError({ message: 'Total to pay back can’t be less than what you borrowed' });
     if (!monthCount || monthCount > 120) return setError({ message: 'Enter the number of months (1–120)' });
-    if (kind === 'cash' && !toAccountId) return setError({ message: 'Choose where the cash went' });
+    if (forOther && !personId && !newPerson.trim()) return setError({ message: 'Choose who used your lending app' });
+    if (kind === 'cash' && !forOther && !toAccountId) return setError({ message: 'Choose where the cash went' });
     try {
       const { account } = await create.mutateAsync({
         lender: lenderName,
@@ -88,6 +105,7 @@ function LoanForm() {
         category_id: kind === 'purchase' ? categoryId : undefined,
         to_account_id: kind === 'cash' ? toAccountId : undefined,
         is_private: isPrivate,
+        ...(forOther ? { for_person_id: await personIdOrCreate(), person_covers_interest: coversInterest } : {}),
       });
       if (params.back) router.back();
       else router.replace(`/account/${account.id}`);
@@ -107,6 +125,39 @@ function LoanForm() {
       </View>
 
       <Segmented value={kind} onChange={setKind} options={[{ value: 'purchase', label: 'New purchase' }, { value: 'cash', label: 'Cash loan' }, { value: 'existing', label: 'Already paying' }]} />
+
+      <View style={{ gap: space.sm }}>
+        <Label>Who is it for?</Label>
+        <Segmented value={forWho} onChange={setForWho} options={[{ value: 'me', label: 'Me' }, { value: 'other', label: 'Someone else' }]} />
+        {forOther && (
+          <>
+            <Body muted style={{ fontSize: 13 }}>
+              Someone used your {lenderName || 'lending'} account. The loan stays in your name, and they owe you instead. It won't count as your spending.
+            </Body>
+            {people.length > 0 && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+                {people.map((p) => (
+                  <Chip key={p.id} icon="person-outline" label={p.name} selected={personId === p.id} onPress={() => { setPersonId(p.id); setNewPerson(''); }} />
+                ))}
+              </View>
+            )}
+            <Field
+              value={newPerson}
+              onChangeText={(v) => { setNewPerson(v); if (v) setPersonId(null); }}
+              placeholder={people.length ? 'Or type a new name' : 'Their name, e.g. Juan'}
+              maxLength={60}
+            />
+            {kind !== 'existing' && (
+              <ToggleRow
+                label="They'll also pay the interest & fees"
+                hint={coversInterest ? 'They owe you the full amount to pay back' : 'They owe you the price only; the interest is your cost'}
+                value={coversInterest}
+                onValueChange={setCoversInterest}
+              />
+            )}
+          </>
+        )}
+      </View>
       {existing && (
         <Body muted style={{ fontSize: 13 }}>
           For a loan you're already paying, even if you don't remember what it was for. You just need what's left to pay. It won't count as this month's spending.
@@ -172,7 +223,7 @@ function LoanForm() {
         )}
       </View>
 
-      {existing ? null : kind === 'purchase' ? (
+      {existing || forOther ? null : kind === 'purchase' ? (
         <View style={{ gap: space.sm }}>
           <Label>Category (optional)</Label>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
