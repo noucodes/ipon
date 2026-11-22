@@ -40,6 +40,7 @@ object MoneyParser {
     "MariBank Credit" to Regex("\\bmari ?(?:bank )?credit\\b", ic), // before the plain MariBank bank
     "BillEase" to Regex("\\bbill ?ease\\b", ic),
     "SPayLater" to Regex("\\bs ?pay ?later\\b", ic),
+    "TikTok PayLater" to Regex("\\btik ?tok (?:shop )?pay ?later\\b", ic),
     "GGives" to Regex("\\bg ?gives\\b", ic),
     "GLoan" to Regex("\\bg ?loan\\b", ic),
     "Atome" to Regex("\\batome\\b", ic),

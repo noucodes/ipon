@@ -8,6 +8,7 @@ export const LENDERS = [
   { label: 'MariBank Credit', match: /\bmari ?(?:bank )?credit\b/i }, // before the plain MariBank bank
   { label: 'BillEase', match: /\bbill ?ease\b/i },
   { label: 'SPayLater', match: /\bs ?pay ?later\b/i },
+  { label: 'TikTok PayLater', match: /\btik ?tok (?:shop )?pay ?later\b/i },
   { label: 'GGives', match: /\bg ?gives\b/i },
   { label: 'GLoan', match: /\bg ?loan\b/i },
   { label: 'Atome', match: /\batome\b/i },

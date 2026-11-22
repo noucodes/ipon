@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { toCents, todayInManila, formatPHP } from '@ft/shared';
 import { RequireAuth } from '../components/RequireAuth';
 import { useAuth } from '../lib/auth';
-import { Body, Button, Card, Chip, ErrorText, Field, IconButton, Label, Money, Segmented, Title } from '../components/ui';
+import { Body, Button, Card, Chip, ErrorText, Field, IconButton, Label, Money, NameAmount, Segmented, Title } from '../components/ui';
 import { BigAmount } from '../components/BigAmount';
 import { useAccounts, useRecurring, useSummary, refreshMoney, api } from '../lib/queries';
 import { queryClient } from '../lib/queryClient';
@@ -218,10 +218,9 @@ function SetupGuide() {
               <Card>
                 <Label>Already added</Label>
                 {recurring.map((r) => (
-                  <View key={r.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Body>{r.name}</Body>
+                  <NameAmount key={r.id} name={r.name}>
                     <Money cents={r.amount_cents} kind={r.kind} />
-                  </View>
+                  </NameAmount>
                 ))}
               </Card>
             )}
@@ -307,10 +306,9 @@ function Finished() {
 
 function Line({ label, cents }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 }}>
-      <Body>{label}</Body>
+    <NameAmount name={label}>
       <Money cents={cents} />
-    </View>
+    </NameAmount>
   );
 }
 
@@ -320,12 +318,11 @@ function Already({ items, people }) {
     <Card>
       <Label>Already added</Label>
       {items.map((a) => (
-        <View key={a.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Body>{a.name}</Body>
+        <NameAmount key={a.id} name={a.name}>
           {people
             ? <Money cents={Math.abs(a.balance_cents)} kind={a.balance_cents > 0 ? 'income' : a.balance_cents < 0 ? 'expense' : undefined} />
             : <Money cents={a.balance_cents} />}
-        </View>
+        </NameAmount>
       ))}
     </Card>
   );

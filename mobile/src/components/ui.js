@@ -292,3 +292,13 @@ export function SwitchRow({ value, onValueChange, disabled, ...row }) {
     </View>
   );
 }
+
+/** Name on the left (wraps up to 2 lines), amount pinned on the right: long names never push the amount off-screen. */
+export function NameAmount({ name, children, style }) {
+  return (
+    <View style={[{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 3 }, style]}>
+      <Body style={{ flex: 1 }} numberOfLines={2}>{name}</Body>
+      <View style={{ flexShrink: 0 }}>{children}</View>
+    </View>
+  );
+}

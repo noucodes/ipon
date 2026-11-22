@@ -82,3 +82,9 @@ test('MariBank Credit is a lender; plain MariBank stays a bank', () => {
   assert.equal(p('x', 'MariBank Credit: Your payment of ₱3,250 is due on Dec 5'), null); // reminder, not a payment
   assert.deepEqual(p('x', 'MariBank: You have received PHP 2,000.00 from JUAN'), { source: 'MariBank', type: 'income', amount_cents: 200000 });
 });
+
+test('TikTok PayLater alerts are loan payments', () => {
+  assert.deepEqual(p('com.ss.android.ugc.trill', 'TikTok PayLater: Your repayment of ₱1,250.00 was successful.'), { source: 'TikTok PayLater', type: 'loan_payment', amount_cents: 125000 });
+  assert.equal(p('x', 'TikTok Shop PayLater payment of PHP 800.00 received').type, 'loan_payment');
+  assert.equal(p('x', 'TikTok PayLater: ₱1,250 is due on Dec 10. Pay now to avoid late fees.'), null);
+});

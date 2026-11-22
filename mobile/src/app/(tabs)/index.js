@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
-import { Body, Card, Empty, ErrorText, Ionicons, Label, Loading, Money } from '../../components/ui';
+import { Body, Card, Empty, ErrorText, Ionicons, Label, Loading, Money, NameAmount } from '../../components/ui';
 import { TransactionRow } from '../../components/TransactionRow';
 import { OutboxBanner } from '../../components/Outbox';
 import { DetectedList } from '../../components/DetectedList';
@@ -185,10 +185,9 @@ export default function Home() {
                 <Money cents={s.month_flow.expense_cents} size={22} weight="800" />
                 {s.month_flow.spending_by_category.slice(0, 5).map((c) => (
                   <View key={c.category_id ?? 'none'} style={{ gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                      <Body>{c.name}</Body>
+                    <NameAmount name={c.name}>
                       <Money cents={c.total_cents} />
-                    </View>
+                    </NameAmount>
                     <View style={{ height: 6, borderRadius: 3, backgroundColor: t.chip }}>
                       <View style={{ height: 6, borderRadius: 3, backgroundColor: t.expense, width: `${Math.max(3, (c.total_cents / Math.max(1, s.month_flow.expense_cents)) * 100)}%` }} />
                     </View>
@@ -201,10 +200,9 @@ export default function Home() {
               <Card>
                 <Label>Coming up (30 days)</Label>
                 {s.recurring.upcoming.map((r) => (
-                  <View key={r.id} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Body>{r.name} <Body muted>· {friendlyDate(r.next_date)}</Body></Body>
-                    <Money cents={r.amount_cents} kind={r.kind} signed />
-                  </View>
+                  <NameAmount key={r.id} name={<>{r.name} <Body muted>· {friendlyDate(r.next_date)}</Body></>}>
+                    <Money cents={r.expected_cents ?? r.amount_cents} kind={r.kind} signed />
+                  </NameAmount>
                 ))}
               </Card>
             )}
