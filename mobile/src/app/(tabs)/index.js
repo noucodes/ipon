@@ -10,6 +10,7 @@ import { SetupCard } from '../../components/SetupCard';
 import { BigAmount } from '../../components/BigAmount';
 import { Sparkline } from '../../components/Sparkline';
 import { AccountAvatar } from '../../components/AccountAvatar';
+import { PaydayPreview, TodayBudgetCard } from '../../components/MoneyPlan';
 import { useAccounts, useHousehold, useNetWorthHistory, useSummary } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useDoubleTap } from '../../lib/useDoubleTap';
@@ -58,7 +59,7 @@ export default function Home() {
         </View>
 
         {/* Hero balance card */}
-        <View style={{ backgroundColor: t.hero, borderRadius: 30, padding: space.xl, paddingBottom: 34, gap: space.md }}>
+        <View style={{ backgroundColor: t.hero, borderRadius: 30, padding: space.xl, paddingBottom: 46, gap: space.md }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: t.heroText }} numberOfLines={1}>
@@ -88,6 +89,13 @@ export default function Home() {
               <Text style={{ fontSize: 52, fontWeight: '800', color: t.heroText }}>₱ ••••••</Text>
             ) : (
               <BigAmount cents={s?.balances.net_worth_cents ?? 0} size={52} color={t.heroText} />
+            )}
+            {s && (
+              // What you can actually use right now, next to the big-picture number
+              <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 2 }}>
+                <HeroStat label="Money on hand" value={hidden ? '••••' : formatPHP(s.balances.spendable_cents)} />
+                {s.balances.savings_cents !== 0 && <HeroStat label="Savings" value={hidden ? '••••' : formatPHP(s.balances.savings_cents)} />}
+              </View>
             )}
           </View>
         </View>
@@ -122,6 +130,9 @@ export default function Home() {
 
         {s && (
           <>
+            <TodayBudgetCard plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />
+            <PaydayPreview plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />
+
             {/* Accounts + trend */}
             <View style={{ flexDirection: 'row', gap: space.md }}>
               <Card style={{ flex: 1, padding: space.md }} onPress={() => router.push('/accounts')}>
@@ -208,6 +219,16 @@ export default function Home() {
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function HeroStat({ label, value }) {
+  const t = useTheme();
+  return (
+    <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center' }}>
+      <Text style={{ color: t.heroText, opacity: 0.65, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ color: t.heroText, fontWeight: '800', fontSize: 15, fontVariant: ['tabular-nums'] }} numberOfLines={1}>{value}</Text>
+    </View>
   );
 }
 

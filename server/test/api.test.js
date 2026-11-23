@@ -257,6 +257,54 @@ test("partner's summary excludes private accounts and their bills", async () => 
   assert.equal(theirs.body.recurring.monthly_expenses_cents, 1_200_000);
 });
 
+test('summary shows money on hand and a daily budget; insights add up', async () => {
+  const s = (await api('GET', '/summary', { token: me })).body;
+  const accounts = (await api('GET', '/accounts', { token: me })).body.accounts;
+  const onHand = accounts.filter((a) => ['bank', 'digital_bank', 'cash'].includes(a.type)).reduce((n, a) => n + a.balance_cents, 0);
+  assert.equal(s.balances.spendable_cents, onHand);
+  assert.equal(s.plan.spendable_cents, onHand);
+  assert.ok(s.plan.days_left >= 1);
+  assert.ok(['ok', 'near', 'over', 'way_over', 'short'].includes(s.plan.today.status));
+
+  const i = await api('GET', '/summary/insights?months=3', { token: me });
+  assert.equal(i.status, 200, JSON.stringify(i.body));
+  assert.equal(i.body.cash_flow.length, 3);
+  assert.equal(i.body.forecast.length, 46);
+  assert.equal(i.body.daily.at(-1).date, s.today);
+  const monthOut = i.body.daily.reduce((n, d) => n + d.everyday_cents + d.bills_cents, 0);
+  assert.equal(monthOut, s.month_flow.expense_cents);
+  assert.equal(i.body.cash_flow.at(-1).expense_cents, s.month_flow.expense_cents);
+
+  // A partner's money on hand leaves out private accounts
+  const theirs = (await api('GET', '/summary', { token: partner })).body;
+  assert.ok(theirs.balances.spendable_cents <= s.balances.spendable_cents);
+});
+
+test('owner can set a fixed daily budget and savings %; partner cannot', async () => {
+  const h = (await api('GET', '/household', { token: me })).body.household;
+  assert.equal(h.daily_budget_cents, null);
+  assert.equal(h.save_rate_pct, 20);
+
+  const set = await api('PATCH', '/household', { token: me, body: { daily_budget_cents: 50_000, save_rate_pct: 30 } });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(Number(set.body.household.daily_budget_cents), 50_000);
+  assert.equal(set.body.household.name, h.name); // untouched
+  let plan = (await api('GET', '/summary', { token: partner })).body.plan; // partner sees the same budget
+  assert.equal(plan.budget_mode, 'fixed');
+  assert.equal(plan.daily_budget_cents, 50_000);
+  assert.equal(plan.save_rate_pct, 30);
+  assert.equal((await api('GET', '/summary/insights', { token: me })).body.plan.daily_budget_cents, 50_000);
+
+  assert.equal((await api('PATCH', '/household', { token: partner, body: { daily_budget_cents: 1 } })).status, 403);
+  assert.equal((await api('PATCH', '/household', { token: me, body: { save_rate_pct: 101 } })).status, 400);
+
+  // Back to automatic; savings % stays
+  await api('PATCH', '/household', { token: me, body: { daily_budget_cents: null } });
+  plan = (await api('GET', '/summary', { token: me })).body.plan;
+  assert.equal(plan.budget_mode, 'auto');
+  assert.equal(plan.save_rate_pct, 30);
+});
+
 test('net worth history ends at current net worth, and starts when tracking began', async () => {
   const s = await api('GET', '/summary', { token: me });
   const h = await api('GET', '/summary/net-worth?months=6', { token: me });

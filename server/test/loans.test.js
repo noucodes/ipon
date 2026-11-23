@@ -45,6 +45,8 @@ test('installment purchase: ₱6,000 phone, ₱6,600 over 6 months', async () =>
   assert.equal(s.balances.net_worth_cents, before - 660_000); // ₱6,000 spent + ₱600 interest
   assert.equal(s.month_flow.spending_by_category.find((c) => c.name === 'Interest & fees').total_cents, 60_000);
   assert.equal(s.month_flow.spending_by_category.find((c) => c.name === 'Shopping').total_cents, 600_000);
+  // The purchase isn't "everyday spending today": its installments are budgeted as bills
+  assert.equal(s.plan.today.everyday_cents, 0);
 
   const item = (await api('GET', '/recurring', { token: me })).body.items.find((i) => i.loan_account_id === acct.Phone);
   assert.equal(item.name, 'BillEase · Phone payment');

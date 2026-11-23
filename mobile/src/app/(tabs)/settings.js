@@ -52,6 +52,7 @@ export default function Settings() {
         <Section>
           <Row icon="rocket-outline" iconColor="#0B6B4F" label="Set up my finances" hint="Banks, cards, loans, utang, salary & bills" onPress={() => router.push('/setup')} />
           <Row icon="document-text-outline" iconColor="#2F9E55" label="Payslips & deductions" hint="SSS, PhilHealth, Pag-IBIG, tax, lates" onPress={() => router.push('/payslips')} />
+          <Row icon="wallet-outline" iconColor="#B08820" label="Budget" hint="Daily budget and how much to save" onPress={() => router.push('/budget')} />
         </Section>
       )}
 

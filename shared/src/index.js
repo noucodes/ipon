@@ -133,3 +133,4 @@ export { parseMoneyNotification, detectSource, KNOWN_SOURCES, LENDERS } from './
 export { occurrences, nextCustomDate, describeDays } from './schedule.js';
 export { INCOME_TYPES, LINE_KINDS, PRESET_LINES, computeNet, payslipTotals, cutoffOf } from './payslip.js';
 export { loanProgress } from './loans.js';
+export { SPENDABLE_TYPES, BILL_PRIORITIES, billPriority, scheduleBetween, groupByPriority, byPayOrder, buildMoneyPlan, forecastBalance } from './plan.js';

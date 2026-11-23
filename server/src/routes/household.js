@@ -5,6 +5,9 @@ import { withTransaction } from '../db.js';
 import { generateInviteCode } from '../lib/tokens.js';
 import { requireAuth, requireOwner } from '../middleware/auth.js';
 
+// daily_budget_cents: fixed daily budget (null = automatic); save_rate_pct: savings suggestion
+const HOUSEHOLD_COLS = 'id, name, created_at, daily_budget_cents, save_rate_pct';
+
 export function householdRouter({ pool, config }) {
   const router = Router();
   router.use(requireAuth({ pool, config }));
@@ -12,7 +15,7 @@ export function householdRouter({ pool, config }) {
   // Household details and members
   router.get('/', async (req, res) => {
     const [household, members] = await Promise.all([
-      pool.query(`SELECT id, name, created_at FROM households WHERE id = $1`, [req.user.household_id]),
+      pool.query(`SELECT ${HOUSEHOLD_COLS} FROM households WHERE id = $1`, [req.user.household_id]),
       pool.query(
         `SELECT id, display_name, email, role, created_at FROM users WHERE household_id = $1 ORDER BY created_at`,
         [req.user.household_id],
@@ -21,11 +24,21 @@ export function householdRouter({ pool, config }) {
     res.json({ household: household.rows[0], members: members.rows });
   });
 
+  // Rename, or change the budget settings. daily_budget_cents: null = work it out automatically.
   router.patch('/', requireOwner, async (req, res) => {
-    const { name } = z.object({ name: z.string().trim().min(1).max(80) }).parse(req.body);
+    const patch = z.object({
+      name: z.string().trim().min(1).max(80),
+      daily_budget_cents: z.number().int().positive().max(10_000_000_000).nullable(),
+      save_rate_pct: z.number().int().min(0).max(100),
+    }).partial().parse(req.body);
     const { rows } = await pool.query(
-      `UPDATE households SET name = $1 WHERE id = $2 RETURNING id, name, created_at`,
-      [name, req.user.household_id],
+      `UPDATE households
+          SET name = COALESCE($1, name),
+              daily_budget_cents = CASE WHEN $2 THEN $3::bigint ELSE daily_budget_cents END,
+              save_rate_pct = COALESCE($4, save_rate_pct)
+        WHERE id = $5
+       RETURNING ${HOUSEHOLD_COLS}`,
+      [patch.name ?? null, 'daily_budget_cents' in patch, patch.daily_budget_cents ?? null, patch.save_rate_pct ?? null, req.user.household_id],
     );
     res.json({ household: rows[0] });
   });

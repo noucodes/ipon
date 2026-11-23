@@ -1,7 +1,8 @@
 import { RefreshControl, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Body, Button, Card, Empty, ErrorText, IconButton, Label, Loading, Money, Screen, Title } from '../../components/ui';
-import { useRecurring } from '../../lib/queries';
+import { useRecurring, useSummary } from '../../lib/queries';
+import { PayrollPlanCard } from '../../components/MoneyPlan';
 import { useAuth } from '../../lib/auth';
 import { formatPHP, friendlyDate, scheduleLabel } from '../../lib/format';
 import { space } from '../../theme';
@@ -10,6 +11,7 @@ export default function Plan() {
   const router = useRouter();
   const { isOwner } = useAuth();
   const q = useRecurring();
+  const summary = useSummary();
   const items = q.data ?? [];
   const active = items.filter((i) => i.active && !i.paid_off);
   const income = active.filter((i) => i.kind === 'income');
@@ -43,7 +45,7 @@ export default function Plan() {
   );
 
   return (
-    <Screen refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={q.refetch} />}>
+    <Screen refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => Promise.all([q.refetch(), summary.refetch()])} />}>
       <Title right={isOwner && <IconButton icon="add-circle" label="Add income or bill" onPress={() => router.push('/recurring/new')} />}>Income & Bills</Title>
       {q.isPending && <Loading />}
       <ErrorText error={q.error} />
@@ -64,6 +66,8 @@ export default function Plan() {
           </View>
         </Card>
       )}
+
+      {summary.data?.plan && items.length > 0 && <PayrollPlanCard plan={summary.data.plan} />}
 
       {q.data && items.length === 0 && (
         <Empty

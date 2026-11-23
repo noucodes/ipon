@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { ACCOUNT_TYPES, todayInManila, addDays, nextMonthStart } from '@ft/shared';
+import { ACCOUNT_TYPES, SPENDABLE_TYPES, todayInManila, addDays, nextMonthStart, buildMoneyPlan, forecastBalance } from '@ft/shared';
 import { monthStr } from '../lib/validators.js';
 import { visibleSql } from '../lib/access.js';
 import { listTransactions } from '../lib/transactions.js';
@@ -15,6 +15,31 @@ const SCOPE_CTE = `
   )`;
 
 const sum = (rows, pick) => rows.reduce((acc, r) => acc + pick(r), 0);
+
+/** The wallet's budget settings, as buildMoneyPlan options. */
+async function budgetSettings(pool, householdId) {
+  const { rows } = await pool.query(`SELECT daily_budget_cents, save_rate_pct FROM households WHERE id = $1`, [householdId]);
+  const fixed = rows[0]?.daily_budget_cents;
+  return { dailyBudgetCents: fixed == null ? null : Number(fixed), saveRatePct: rows[0]?.save_rate_pct ?? 20 };
+}
+
+/**
+ * Today's outflows (expenses + transfer fees) per category, split by whether they left a spendable account.
+ * Purchases on an installment loan (BillEase, SPayLater...) are left out: their monthly payments are
+ * already counted as bills, so counting the purchase too would double it.
+ */
+async function todaySpending(pool, base, today) {
+  const { rows } = await pool.query(
+    `WITH ${SCOPE_CTE}
+     SELECT e.category_id, (s.type = ANY($4::text[])) AS spendable, (-SUM(e.delta))::bigint AS total_cents
+       FROM transaction_effects e
+       JOIN scope s ON s.id = e.account_id
+      WHERE e.occurred_on = $3::date AND e.kind IN ('expense', 'fee') AND s.loan_months IS NULL
+      GROUP BY e.category_id, spendable`,
+    [...base, today, SPENDABLE_TYPES],
+  );
+  return rows;
+}
 
 export function summaryRouter({ pool, config }) {
   const router = Router();
@@ -32,7 +57,7 @@ export function summaryRouter({ pool, config }) {
     const monthEnd = nextMonthStart(month); // exclusive
     const base = [req.user.household_id, req.user.role];
 
-    const [accountsRes, flowsRes, categoriesRes, recurringRes] = await Promise.all([
+    const [accountsRes, flowsRes, categoriesRes, recurringRes, spentToday, settings] = await Promise.all([
       pool.query(
         `WITH ${SCOPE_CTE}
          SELECT s.id, s.name, s.type, s.is_private, s.archived, s.due_date, b.balance_cents
@@ -57,6 +82,8 @@ export function summaryRouter({ pool, config }) {
          ORDER BY r.next_date NULLS LAST`,
         base,
       ),
+      todaySpending(pool, base, today),
+      budgetSettings(pool, req.user.household_id),
     ]);
 
     // --- Balances
@@ -99,6 +126,9 @@ export function summaryRouter({ pool, config }) {
     const horizon = addDays(today, 30);
     const upcoming = recurring.filter((r) => r.next_date && r.next_date >= today && r.next_date <= horizon);
 
+    // --- Money on hand, today's budget and the next payroll
+    const plan = buildMoneyPlan({ accounts, recurring, today, todaySpending: spentToday, ...settings });
+
     // --- Latest activity in this view
     const recent = await listTransactions(pool, req.user, { account_ids: accountsRes.rows.map((a) => a.id), limit: 10 });
 
@@ -107,6 +137,8 @@ export function summaryRouter({ pool, config }) {
       today,
       balances: {
         net_worth_cents: netWorth,
+        spendable_cents: plan.spendable_cents,
+        savings_cents: plan.savings_cents,
         assets_cents: netWorth - liabilities,
         liabilities_cents: liabilities,
         owed_to_you_cents: owedToYou,
@@ -128,6 +160,7 @@ export function summaryRouter({ pool, config }) {
         monthly_net_cents: monthlyIncome - monthlyBills,
         upcoming,
       },
+      plan,
       recent_transactions: recent.transactions,
     });
   });
@@ -167,6 +200,97 @@ export function summaryRouter({ pool, config }) {
       [req.user.household_id, req.user.role, today, q.months],
     );
     res.json({ points: rows });
+  });
+
+  /**
+   * GET /summary/insights?months=6
+   * Extra series for the website: everyday spending per day this month (vs the daily budget),
+   * money in vs out per month, and a 45-day forecast of money on hand.
+   */
+  router.get('/insights', async (req, res) => {
+    const q = z.object({ months: z.coerce.number().int().min(1).max(24).default(6) }).parse(req.query);
+    const today = todayInManila();
+    const month = today.slice(0, 7);
+    const base = [req.user.household_id, req.user.role];
+    const since30 = addDays(today, -29);
+    const dailyFrom = `${month}-01` < since30 ? `${month}-01` : since30;
+    const flowFrom = (() => {
+      const [y, m] = month.split('-').map(Number);
+      const d = new Date(Date.UTC(y, m - 1 - (q.months - 1), 1));
+      return d.toISOString().slice(0, 10);
+    })();
+
+    const [accountsRes, recurringRes, dailyRes, flowRes, spentToday, settings] = await Promise.all([
+      pool.query(
+        `WITH ${SCOPE_CTE}
+         SELECT s.id, s.type, s.archived, b.balance_cents
+           FROM scope s JOIN account_balances b ON b.account_id = s.id`,
+        base,
+      ),
+      pool.query(`${RECURRING_SELECT('$2')} AND r.household_id = $1 AND r.active`, base),
+      pool.query(
+        `WITH ${SCOPE_CTE}
+         SELECT to_char(e.occurred_on, 'YYYY-MM-DD') AS date, e.kind, e.category_id,
+                (s.loan_months IS NOT NULL) AS on_loan, SUM(e.delta)::bigint AS total
+           FROM transaction_effects e JOIN scope s ON s.id = e.account_id
+          WHERE e.occurred_on >= $3::date AND e.occurred_on <= $4::date
+            AND e.kind IN ('income', 'expense', 'fee')
+          GROUP BY 1, 2, 3, 4`,
+        [...base, dailyFrom, today],
+      ),
+      pool.query(
+        `WITH ${SCOPE_CTE}
+         SELECT to_char(e.occurred_on, 'YYYY-MM') AS month, e.kind, SUM(e.delta)::bigint AS total
+           FROM transaction_effects e JOIN scope s ON s.id = e.account_id
+          WHERE e.occurred_on >= $3::date AND e.kind IN ('income', 'expense', 'fee')
+          GROUP BY 1, 2`,
+        [...base, flowFrom],
+      ),
+      todaySpending(pool, base, today),
+      budgetSettings(pool, req.user.household_id),
+    ]);
+
+    const recurring = recurringRes.rows.map((r) => serializeRecurring(req.user, r)).filter((r) => !r.paid_off);
+    const plan = buildMoneyPlan({ accounts: accountsRes.rows, recurring, today, todaySpending: spentToday, ...settings });
+    const billCategories = new Set(recurring.filter((r) => r.kind === 'expense').map((r) => r.category_id).filter(Boolean));
+
+    // Per day: everyday spending vs bill payments vs income
+    const days = new Map();
+    for (let d = dailyFrom; d <= today; d = addDays(d, 1)) days.set(d, { date: d, everyday_cents: 0, bills_cents: 0, income_cents: 0 });
+    for (const r of dailyRes.rows) {
+      const day = days.get(r.date);
+      if (!day) continue;
+      if (r.kind === 'income') day.income_cents += Number(r.total);
+      // Bills, and installment purchases (paid off later as bills), aren't everyday spending
+      else if (r.on_loan || (r.category_id && billCategories.has(r.category_id))) day.bills_cents += -Number(r.total);
+      else day.everyday_cents += -Number(r.total);
+    }
+    const allDays = [...days.values()];
+    const last30 = allDays.filter((d) => d.date >= since30);
+    const avgDaily = Math.round(sum(last30, (d) => d.everyday_cents) / Math.max(1, last30.length));
+
+    // Per month: in vs out
+    const months = new Map();
+    for (let i = 0; i < q.months; i++) {
+      const [y, m] = flowFrom.split('-').map(Number);
+      const key = new Date(Date.UTC(y, m - 1 + i, 1)).toISOString().slice(0, 7);
+      months.set(key, { month: key, income_cents: 0, expense_cents: 0 });
+    }
+    for (const r of flowRes.rows) {
+      const row = months.get(r.month);
+      if (!row) continue;
+      if (r.kind === 'income') row.income_cents += Number(r.total);
+      else row.expense_cents += -Number(r.total);
+    }
+
+    res.json({
+      today,
+      plan,
+      average_daily_spend_cents: avgDaily,
+      daily: allDays.filter((d) => d.date >= `${month}-01`),
+      cash_flow: [...months.values()],
+      forecast: forecastBalance({ plan, recurring, days: 45, dailySpend: avgDaily }),
+    });
   });
 
   return router;
