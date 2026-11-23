@@ -90,7 +90,7 @@ export default function Home() {
             ) : (
               <BigAmount cents={s?.balances.net_worth_cents ?? 0} size={52} color={t.heroText} />
             )}
-            {s && (
+            {s?.balances.spendable_cents != null && (
               // What you can actually use right now, next to the big-picture number
               <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 2 }}>
                 <HeroStat label="Money on hand" value={hidden ? '••••' : formatPHP(s.balances.spendable_cents)} />
@@ -130,8 +130,8 @@ export default function Home() {
 
         {s && (
           <>
-            <TodayBudgetCard plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />
-            <PaydayPreview plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />
+            {s.plan && <TodayBudgetCard plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />}
+            {s.plan && <PaydayPreview plan={s.plan} hidden={hidden} onPress={() => router.push('/plan')} />}
 
             {/* Accounts + trend */}
             <View style={{ flexDirection: 'row', gap: space.md }}>
