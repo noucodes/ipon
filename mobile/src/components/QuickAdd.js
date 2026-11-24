@@ -15,8 +15,9 @@ import { SwipeTrack } from './SwipeTrack';
 import { SwipeCard } from './SwipeCard';
 import { BigAmount } from './BigAmount';
 import { TYPE_COLORS } from './AccountAvatar';
-import { useAccounts, useCategories, useFeePresets, useFeeSuggestion, refreshMoney, api } from '../lib/queries';
-import { enqueue, isRetryable, updateQueued } from '../lib/outbox';
+import { useAccounts, useCategories, useFeePresets, useFeeSuggestion } from '../lib/queries';
+import { addTransaction, editTransaction, updateQueued, waitForServerId } from '../lib/outbox';
+import { findCachedTransaction, localId } from '../lib/local';
 import { centsToInput, friendlyDate, ACCOUNT_TYPE_ICONS } from '../lib/format';
 import { matchAccount } from '../lib/detections';
 import { useAuth } from '../lib/auth';
@@ -51,7 +52,6 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
   const [showDate, setShowDate] = useState(false);
   const [sheet, setSheet] = useState(null); // 'log' | 'from' | 'to' account picker
   const [feeSheet, setFeeSheet] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const resultRef = useRef(null);
@@ -120,47 +120,33 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
       occurred_on: date,
       note: note.trim() || null,
     };
-    // Show the confirmation immediately; the save finishes in the background.
+    // Saved on the phone right away (balances update instantly); it syncs in the background.
     pickedCategory.current = null;
-    const shown = { kind, cents, clientId: body.client_id, pending: true };
+    await addTransaction(body, { account_name: account.name, to_account_name: toAccount?.name });
+    const shown = { kind, cents, clientId: body.client_id };
     showResult(shown);
-    setBusy(true);
-    try {
-      const { transaction } = await api.post('/transactions', body, { timeoutMs: 15_000 });
-      showResult({ ...shown, pending: false, id: transaction.id });
-      // A category tapped while the save was still in flight
-      if (pickedCategory.current) await api.patch(`/transactions/${transaction.id}`, { category_id: pickedCategory.current.id }).catch(() => {});
-      refreshMoney();
-    } catch (err) {
-      if (!isRetryable(err)) {
-        // Rejected by the server: take the confirmation away and explain on the card.
-        if (resultRef.current?.clientId === body.client_id) showResult(null);
-        setError(err.message);
-        return;
-      }
-      const c = pickedCategory.current;
-      await enqueue(c ? { ...body, category_id: c.id } : body, { account_name: account.name, to_account_name: toAccount?.name, category_name: c?.name });
-      if (resultRef.current?.clientId === body.client_id) showResult({ ...shown, pending: false, queued: true });
-    } finally {
-      setBusy(false);
-    }
     SecureStore.setItemAsync(LAST_ACCOUNT_KEY, account.id);
     if (detected?.id) {
       detectionStore.remove(detected.id); // logged, so drop it from the detected list
       setDetected(null);
     }
+    // Income can get payslip details, which needs the entry on the server first.
+    if (kind === 'income') {
+      waitForServerId(body.client_id).then((id) => {
+        if (resultRef.current?.clientId !== body.client_id) return;
+        showResult({ ...resultRef.current, ...(id ? { id } : { offline: true }) });
+      });
+    }
   }
 
-  /** Category tapped on the confirmation screen; works before, during or after the save. */
+  /** Category tapped on the confirmation screen; applied on the phone straight away. */
   async function pickCategory(c) {
     pickedCategory.current = c;
     const r = resultRef.current;
-    if (!r || r.pending) return; // applied when the save finishes
-    if (r.queued) await updateQueued(r.clientId, { category_id: c.id }, { category_name: c.name });
-    else {
-      await api.patch(`/transactions/${r.id}`, { category_id: c.id });
-      refreshMoney();
-    }
+    if (!r) return;
+    const row = findCachedTransaction(localId(r.clientId), r.clientId);
+    if (row) await editTransaction(row, { category_id: c.id }).catch((err) => setError(err.message));
+    else await updateQueued(r.clientId, { category_id: c.id }, { category_name: c.name });
   }
 
   /** From the confirmation screen: add a payslip breakdown to the income just saved. */
@@ -288,16 +274,16 @@ export function QuickAdd({ initialType = 'expense', initialAmountCents = 0, sour
 
         {mode === 'log' ? (
           <SwipeCard
-            canSwipe={Boolean(cents) && !busy}
+            canSwipe={Boolean(cents)}
             onSwipe={(dir) => save(dir === 'left' ? 'expense' : 'income')}
-            onBlocked={() => setError(busy ? 'Saving…' : 'Enter an amount first')}
+            onBlocked={() => setError('Enter an amount first')}
           >
             {content}
           </SwipeCard>
         ) : (
           <>
             {content}
-            <SwipeTrack mode="right" rightLabel="Transfer" disabled={busy || !cents || !toAccountId} onComplete={() => save('transfer')} hint={busy ? 'Saving…' : !toAccountId ? 'Choose where the money goes' : null} />
+            <SwipeTrack mode="right" rightLabel="Transfer" disabled={!cents || !toAccountId} onComplete={() => save('transfer')} hint={!toAccountId ? 'Choose where the money goes' : null} />
           </>
         )}
       </View>
@@ -485,10 +471,10 @@ function Success({ result, account, toAccount, fee, onClose, onAnother, onPickCa
     <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: appear, transform: [{ scale: appear.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }}>
     <Pressable onPress={onClose} accessibilityLabel="Saved. Tap anywhere to close" style={{ flex: 1, backgroundColor: color, padding: space.xl, justifyContent: 'center', gap: space.md }}>
       <View style={{ alignItems: 'center', gap: space.sm }}>
-        <Ionicons name={result.queued ? 'cloud-offline-outline' : 'checkmark'} size={64} color="#fff" />
+        <Ionicons name="checkmark" size={64} color="#fff" />
         <BigAmount cents={result.cents} size={46} color="#fff" />
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>{caption}</Text>
-        {result.queued && <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center' }}>Saved offline, it will sync when you're back online.</Text>}
+        {result.offline && <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center' }}>Saved on your phone. It will sync when you're back online.</Text>}
       </View>
 
       {result.kind !== 'transfer' && categories.length > 0 && (
@@ -509,7 +495,7 @@ function Success({ result, account, toAccount, fee, onClose, onAnother, onPickCa
       )}
 
       {/* Salary / part-time / project: add the payslip breakdown to this income */}
-      {result.kind === 'income' && onPayslip && !result.queued && (
+      {result.kind === 'income' && onPayslip && !result.offline && (
         <Pressable
           onPress={() => onPayslip(categories.find((c) => c.id === picked)?.name)}
           disabled={!result.id}
@@ -519,7 +505,7 @@ function Success({ result, account, toAccount, fee, onClose, onAnother, onPickCa
           <Text style={{ color, fontWeight: '800' }}>{result.id ? 'Add payslip details' : 'Saving…'}</Text>
         </Pressable>
       )}
-      {result.kind === 'income' && onPayslip && !result.queued && (
+      {result.kind === 'income' && onPayslip && !result.offline && (
         <Text style={{ color: '#fff', opacity: 0.8, fontSize: 12, textAlign: 'center' }}>Salary? Add SSS, PhilHealth, Pag-IBIG, tax or lates</Text>
       )}
 

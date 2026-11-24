@@ -60,7 +60,8 @@ export function summaryRouter({ pool, config }) {
     const [accountsRes, flowsRes, categoriesRes, recurringRes, spentToday, settings] = await Promise.all([
       pool.query(
         `WITH ${SCOPE_CTE}
-         SELECT s.id, s.name, s.type, s.is_private, s.archived, s.due_date, b.balance_cents
+         SELECT s.id, s.name, s.type, s.is_private, s.archived, s.due_date, b.balance_cents,
+                (s.loan_months IS NOT NULL) AS is_loan
            FROM scope s
            JOIN account_balances b ON b.account_id = s.id
           ORDER BY s.archived, s.sort_order, s.created_at`,
@@ -161,6 +162,13 @@ export function summaryRouter({ pool, config }) {
         upcoming,
       },
       plan,
+      // What `plan` was built from, so the phone can rebuild it after logging something offline
+      plan_inputs: {
+        recurring,
+        today_spending: spentToday,
+        daily_budget_cents: settings.dailyBudgetCents,
+        save_rate_pct: settings.saveRatePct,
+      },
       recent_transactions: recent.transactions,
     });
   });

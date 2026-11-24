@@ -3,11 +3,11 @@ import { Stack, useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { AppLock } from '../components/AppLock';
 import { StatusBar } from 'expo-status-bar';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '../lib/auth';
 import { BackgroundTasks } from '../lib/background';
-import { queryClient } from '../lib/queryClient';
+import { persistOptions, queryClient } from '../lib/queryClient';
 import { useTheme } from '../theme';
 
 // Deep links straight to /add (shortcuts, widget) still get the tabs underneath.
@@ -67,14 +67,14 @@ function NotificationTaps() {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
         <AuthProvider>
           <BackgroundTasks />
           <NotificationTaps />
           <RootStack />
           <AppLock />
         </AuthProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </SafeAreaProvider>
   );
 }

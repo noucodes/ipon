@@ -10,8 +10,9 @@ import { Body, Button, Card, Chip, ChipRow, ErrorText, Field, Ionicons, Label, S
 import { BigAmount } from './BigAmount';
 import { TransactionRow } from './TransactionRow';
 import { useAuth } from '../lib/auth';
-import { useAccounts, useCategories, useMoneyMutation, useTransactions, refreshMoney, api } from '../lib/queries';
+import { useAccounts, useCategories, useTransactions, refreshMoney, api } from '../lib/queries';
 import { centsToInput, formatPHP, friendlyDate } from '../lib/format';
+import { addTransaction, saveAccount } from '../lib/outbox';
 import { useTheme, space, radius } from '../theme';
 
 export function PersonScreen({ person }) {
@@ -54,7 +55,6 @@ function PersonDetail({ person }) {
   const history = useTransactions({ account_id: person.id });
   const categories = useCategories().data ?? [];
   const writtenOff = categories.find((c) => c.is_system && c.name === 'Written off');
-  const writeOff = useMoneyMutation((body) => api.post('/transactions', body));
 
   const b = person.balance_cents;
   const owesYou = b > 0;
@@ -77,7 +77,7 @@ function PersonDetail({ person }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await writeOff.mutateAsync({
+              await addTransaction({
                 client_id: Crypto.randomUUID(),
                 type: 'expense',
                 amount_cents: b,
@@ -152,7 +152,7 @@ function PersonDetail({ person }) {
       {isOwner && (
         <View style={{ gap: space.sm }}>
           {owesYou && (
-            <Button title="Write off (won't be paid back)" variant="secondary" icon="close-circle-outline" onPress={confirmWriteOff} loading={writeOff.isPending} />
+            <Button title="Write off (won't be paid back)" variant="secondary" icon="close-circle-outline" onPress={confirmWriteOff} />
           )}
           <Button title="Edit person" variant="secondary" icon="create-outline" onPress={() => setEditing(true)} />
           {others.length > 0 && (
@@ -211,8 +211,7 @@ function PersonForm({ person, onDone }) {
   const [isPrivate, setIsPrivate] = useState(person?.is_private ?? false);
   const [picker, setPicker] = useState(false);
   const [error, setError] = useState(null);
-  const save = useMoneyMutation((body) => (isNew ? api.post('/accounts', body) : api.patch(`/accounts/${person.id}`, body)));
-  const archive = useMoneyMutation(() => api.patch(`/accounts/${person.id}`, { archived: !person.archived }));
+  const everyone = useAccounts({ includeArchived: true }).data ?? [];
   const t = useTheme();
 
   async function onSave() {
@@ -228,20 +227,20 @@ function PersonForm({ person, onDone }) {
       is_private: isPrivate,
       ...(isNew ? { type: 'person' } : {}),
     };
-    try {
-      await save.mutateAsync(body);
-      if (onDone) onDone();
-      else router.back();
-    } catch (err) {
-      if (err.code === 'person_exists' && err.accountId) {
-        Alert.alert('Already in People', `${name.trim()} is already on your list. Open them instead?`, [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Open', onPress: () => router.replace(`/account/${err.accountId}`) },
-        ]);
-        return;
-      }
-      setError(err);
+    // One entry per person, so their utang isn't split across duplicates
+    const twin = everyone.find((a) => a.type === 'person' && !a.archived && a.id !== person?.id
+      && a.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (isNew && twin) {
+      Alert.alert('Already in People', `${name.trim()} is already on your list. Open them instead?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open', onPress: () => router.replace(`/account/${twin.id}`) },
+      ]);
+      return;
     }
+    // Saved on the phone straight away; it syncs in the background.
+    await saveAccount(person ?? null, body);
+    if (onDone) onDone();
+    else router.back();
   }
 
   return (
@@ -282,7 +281,7 @@ function PersonForm({ person, onDone }) {
       <ToggleRow label="Private" hint="Hide this person from your partner" value={isPrivate} onValueChange={setIsPrivate} />
 
       <ErrorText error={error} />
-      <Button title={isNew ? 'Add person' : 'Save'} onPress={onSave} loading={save.isPending} />
+      <Button title={isNew ? 'Add person' : 'Save'} onPress={onSave} />
       {!isNew && (
         <>
           <Button title="Cancel" variant="secondary" onPress={onDone} />
@@ -290,8 +289,7 @@ function PersonForm({ person, onDone }) {
             title={person.archived ? 'Unarchive' : 'Archive (hide when settled)'}
             variant="secondary"
             icon="archive-outline"
-            loading={archive.isPending}
-            onPress={async () => { try { await archive.mutateAsync(); router.back(); } catch (err) { setError(err); } }}
+            onPress={async () => { await saveAccount(person, { archived: !person.archived }); router.back(); }}
           />
         </>
       )}

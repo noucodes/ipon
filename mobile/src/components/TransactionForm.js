@@ -5,9 +5,9 @@ import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { toCents, todayInManila, addDays, balanceEffects } from '@ft/shared';
 import { Body, Button, Chip, ChipRow, ErrorText, Field, Label, Loading, Segmented, Empty } from './ui';
-import { useAccounts, useCategories, useFeePresets, useFeeSuggestion, useMoneyMutation, api } from '../lib/queries';
+import { useAccounts, useCategories, useFeePresets, useFeeSuggestion } from '../lib/queries';
 import { ACCOUNT_TYPE_ICONS, centsToInput, formatPHP, friendlyDate } from '../lib/format';
-import { enqueue, isRetryable } from '../lib/outbox';
+import { addTransaction, deleteTransaction, editTransaction } from '../lib/outbox';
 import { useTheme, space, radius } from '../theme';
 
 const LAST_ACCOUNT_KEY = 'last_account_id';
@@ -61,12 +61,6 @@ export function TransactionForm({ initial, initialType = 'expense', onDone }) {
 
   const categories = (categoriesQ.data ?? []).filter((c) => c.kind === type && !c.archived);
 
-  const save = useMoneyMutation(async (body) => {
-    if (editing) return api.patch(`/transactions/${initial.id}`, body);
-    // Short timeout: if the server is asleep/unreachable we queue it instead of making you wait.
-    return api.post('/transactions', body, { timeoutMs: 15_000 });
-  });
-  const remove = useMoneyMutation(() => api.del(`/transactions/${initial.id}`));
 
   const amountCents = toCents(amount || '0');
   const feeCents = type === 'transfer' ? toCents(fee || '0') : 0;
@@ -105,23 +99,25 @@ export function TransactionForm({ initial, initialType = 'expense', onDone }) {
       occurred_on: date,
       note: note.trim() || null,
     };
-    if (!editing) body.client_id = Crypto.randomUUID();
+    if (type === 'transfer' && toAccountId === accountId) return setFormError({ message: "You can't transfer to the same account" });
+    if (type === 'transfer' && feePaidBy === 'receiver' && feeCents > amountCents) return setFormError({ message: 'Fee is larger than the amount received' });
+    if (type === 'income' && accounts.find((a) => a.id === accountId)?.type === 'person') {
+      return setFormError({ message: 'To record a repayment, use a transfer from the person to your account' });
+    }
+    // Saved on the phone straight away; it syncs in the background.
     try {
-      await save.mutateAsync(body);
-      await SecureStore.setItemAsync(LAST_ACCOUNT_KEY, accountId);
-      onDone?.();
-    } catch (err) {
-      // No signal / server asleep: keep it on the phone and sync later.
-      if (!editing && isRetryable(err)) {
-        await enqueue(body, {
+      if (editing) {
+        await editTransaction(initial, body);
+      } else {
+        await addTransaction({ ...body, client_id: Crypto.randomUUID() }, {
           account_name: accounts.find((a) => a.id === accountId)?.name,
           to_account_name: accounts.find((a) => a.id === toAccountId)?.name,
           category_name: categories.find((c) => c.id === categoryId)?.name,
         });
-        await SecureStore.setItemAsync(LAST_ACCOUNT_KEY, accountId);
-        onDone?.({ queued: true });
-        return;
       }
+      SecureStore.setItemAsync(LAST_ACCOUNT_KEY, accountId);
+      onDone?.();
+    } catch (err) {
       setFormError(err);
     }
   }
@@ -134,7 +130,7 @@ export function TransactionForm({ initial, initialType = 'expense', onDone }) {
         style: 'destructive',
         onPress: async () => {
           try {
-            await remove.mutateAsync();
+            await deleteTransaction(initial);
             onDone?.();
           } catch (err) {
             setFormError(err);
@@ -307,10 +303,10 @@ export function TransactionForm({ initial, initialType = 'expense', onDone }) {
       <ErrorText error={formError} />
 
       {!readOnly && (
-        <Button title={editing ? 'Save changes' : 'Save'} onPress={onSave} loading={save.isPending} />
+        <Button title={editing ? 'Save changes' : 'Save'} onPress={onSave} />
       )}
       {editing && !readOnly && (
-        <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} loading={remove.isPending} />
+        <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} />
       )}
     </View>
   );

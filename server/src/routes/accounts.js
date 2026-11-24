@@ -21,6 +21,7 @@ const fields = {
 };
 
 const createSchema = z.object({
+  id: z.uuid().optional(), // chosen by the phone for entries saved offline
   name: fields.name,
   type: fields.type,
   opening_balance_cents: fields.opening_balance_cents.default(0),
@@ -71,6 +72,14 @@ export function accountsRouter({ pool, config }) {
 
   router.post('/', requireOwner, async (req, res) => {
     const body = createSchema.parse(req.body);
+    // The phone picks the id when it saves offline; sending the same one again is harmless.
+    if (body.id) {
+      const { rows: found } = await pool.query(`SELECT household_id FROM accounts WHERE id = $1`, [body.id]);
+      if (found[0]) {
+        if (found[0].household_id !== req.user.household_id) throw conflict('That id is already in use', 'id_taken');
+        return res.status(200).json({ account: serialize(req.user, await fetchAccount(pool, req.user, body.id)) });
+      }
+    }
     // One entry per person, so their utang isn't split across duplicates
     if (body.type === 'person') {
       const dup = await pool.query(
@@ -82,9 +91,9 @@ export function accountsRouter({ pool, config }) {
       }
     }
     const { rows } = await pool.query(
-      `INSERT INTO accounts (household_id, name, type, opening_balance_cents, is_private, sort_order, due_date, note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [req.user.household_id, body.name, body.type, body.opening_balance_cents, body.is_private, body.sort_order, body.due_date, body.note || null],
+      `INSERT INTO accounts (id, household_id, name, type, opening_balance_cents, is_private, sort_order, due_date, note)
+       VALUES (COALESCE($9::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [req.user.household_id, body.name, body.type, body.opening_balance_cents, body.is_private, body.sort_order, body.due_date, body.note || null, body.id ?? null],
     );
     res.status(201).json({ account: serialize(req.user, await fetchAccount(pool, req.user, rows[0].id)) });
   });

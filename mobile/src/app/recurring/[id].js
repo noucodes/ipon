@@ -5,7 +5,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FREQUENCIES, toCents, todayInManila, describeDays } from '@ft/shared';
 import { RequireAuth } from '../../components/RequireAuth';
 import { Body, Button, Chip, ChipRow, ErrorText, Field, Label, Loading, Segmented, ToggleRow } from '../../components/ui';
-import { useAccounts, useCategories, useMoneyMutation, useRecurring, api } from '../../lib/queries';
+import { useAccounts, useCategories, useRecurring } from '../../lib/queries';
+import { deleteRecurring, saveRecurring } from '../../lib/outbox';
 import { FREQUENCY_LABELS, centsToInput, friendlyDate } from '../../lib/format';
 import { useTheme, space, radius } from '../../theme';
 
@@ -49,8 +50,6 @@ function RecurringForm({ item, defaultKind }) {
   const [picker, setPicker] = useState(false);
   const [error, setError] = useState(null);
 
-  const save = useMoneyMutation((body) => (isNew ? api.post('/recurring', body) : api.patch(`/recurring/${item.id}`, body)));
-  const remove = useMoneyMutation(() => api.del(`/recurring/${item.id}`));
   const categories = allCategories.filter((c) => c.kind === kind && !c.archived && !c.is_system);
 
   async function onSave() {
@@ -71,19 +70,17 @@ function RecurringForm({ item, defaultKind }) {
       days_of_month: frequency === 'custom_days' ? days : null,
       active,
     };
-    try {
-      await save.mutateAsync(body);
-      router.back();
-    } catch (err) {
-      setError(err);
-    }
+    // Saved on the phone straight away; it syncs in the background.
+    await saveRecurring(item ?? null, body);
+    router.back();
   }
 
   function onDelete() {
     Alert.alert(`Delete ${item.name}?`, undefined, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await remove.mutateAsync(); router.back(); } catch (err) { setError(err); }
+        await deleteRecurring(item);
+        router.back();
       } },
     ]);
   }
@@ -153,8 +150,8 @@ function RecurringForm({ item, defaultKind }) {
       <ToggleRow label="Active" hint="Paused items don't count toward monthly totals" value={active} onValueChange={setActive} />
 
       <ErrorText error={error} />
-      <Button title={isNew ? 'Add' : 'Save changes'} onPress={onSave} loading={save.isPending} />
-      {!isNew && <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} loading={remove.isPending} />}
+      <Button title={isNew ? 'Add' : 'Save changes'} onPress={onSave} />
+      {!isNew && <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} />}
     </>
   );
 }

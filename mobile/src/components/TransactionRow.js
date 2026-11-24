@@ -40,6 +40,7 @@ export function TransactionRow({ tx, onPress, showAuthor = true, card = false, c
         <Text style={{ color: t.text, fontSize: compact ? 14 : 15, fontWeight: '700' }} numberOfLines={1}>{title}</Text>
         {!!subtitle && <Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>{subtitle}</Text>}
       </View>
+      {tx.pending && <Ionicons name="cloud-upload-outline" size={14} color={t.muted} accessibilityLabel="Not synced yet" />}
       <Money cents={tx.amount_cents} kind={tx.type === 'transfer' ? undefined : tx.type} signed={tx.type !== 'transfer'} size={compact ? 14 : 16} weight="800" />
     </Pressable>
   );

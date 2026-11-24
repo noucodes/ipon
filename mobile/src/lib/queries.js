@@ -3,10 +3,10 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { get, post, patch, del, qs } from './api';
 import { queryClient } from './queryClient';
+import { findCachedAccount, findCachedTransaction, isLocalId, refreshMoney } from './local';
+import { isUnsynced } from './outbox';
 
-export const refreshMoney = () =>
-  Promise.all(['summary', 'accounts', 'transactions', 'transaction', 'recurring', 'categories', 'feeSuggest']
-    .map((k) => queryClient.invalidateQueries({ queryKey: [k] })));
+export { refreshMoney };
 
 export const useSummary = () =>
   useQuery({ queryKey: ['summary'], queryFn: () => get('/summary') });
@@ -21,8 +21,19 @@ export const useAccounts =({ includeArchived = false } = {}) =>
     select: (d) => d.accounts,
   });
 
+/** One account: opens instantly from what's on the phone; not fetched until it has synced. */
 export const useAccount = (id) =>
-  useQuery({ queryKey: ['accounts', 'one', id], queryFn: () => get(`/accounts/${id}`), select: (d) => d.account, enabled: !!id });
+  useQuery({
+    queryKey: ['accounts', 'one', id],
+    queryFn: () => get(`/accounts/${id}`),
+    select: (d) => d.account,
+    enabled: !!id && !isUnsynced('account', id),
+    initialData: () => {
+      const account = id && findCachedAccount(id);
+      return account ? { account } : undefined;
+    },
+    initialDataUpdatedAt: 0,
+  });
 
 export const useCategories = () =>
   useQuery({ queryKey: ['categories'], queryFn: () => get('/categories'), select: (d) => d.categories, staleTime: 5 * 60_000 });
@@ -38,8 +49,19 @@ export const useFeeSuggestion = (from, to) =>
     enabled: Boolean(from && to && from !== to),
   });
 
+/** One transaction: opens instantly from what's already on the phone, then refreshes. */
 export const useTransaction = (id) =>
-  useQuery({ queryKey: ['transaction', id], queryFn: () => get(`/transactions/${id}`), select: (d) => d.transaction, enabled: !!id });
+  useQuery({
+    queryKey: ['transaction', id],
+    queryFn: () => get(`/transactions/${id}`),
+    select: (d) => d.transaction,
+    enabled: !!id && !isLocalId(id),
+    initialData: () => {
+      const tx = findCachedTransaction(id);
+      return tx ? { transaction: tx } : undefined;
+    },
+    initialDataUpdatedAt: 0,
+  });
 
 const PAGE = 40;
 export const useTransactions = (filters = {}, { enabled = true } = {}) =>
@@ -63,9 +85,10 @@ export const useInvites = (enabled) =>
 export function useMoneyMutation(fn, { extraKeys = [] } = {}) {
   return useMutation({
     mutationFn: fn,
-    onSuccess: async () => {
-      await refreshMoney();
-      await Promise.all(extraKeys.map((k) => queryClient.invalidateQueries({ queryKey: [k] })));
+    // Refresh in the background; don't keep the screen waiting for every list to reload.
+    onSuccess: () => {
+      refreshMoney();
+      extraKeys.forEach((k) => queryClient.invalidateQueries({ queryKey: [k] }));
     },
   });
 }

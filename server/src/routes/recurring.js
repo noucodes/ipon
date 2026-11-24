@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { FREQUENCIES, RECURRING_KINDS, monthlyEquivalentCents, nextCustomDate, todayInManila } from '@ft/shared';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { id, positiveCents, dateStr, parseId } from '../lib/validators.js';
 import { visibleSql, isOwner, requireOwner, getVisibleAccounts, assertCategory } from '../lib/access.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -21,6 +21,7 @@ const fields = {
 };
 
 const createSchema = z.object({
+  id: z.uuid().optional(), // chosen by the phone for entries saved offline
   ...fields,
   account_id: fields.account_id.default(null),
   category_id: fields.category_id.default(null),
@@ -109,13 +110,21 @@ export function recurringRouter({ pool, config }) {
 
   router.post('/', requireOwner, async (req, res) => {
     const item = createSchema.parse(req.body);
+    // The phone picks the id when it saves offline; sending the same one again is harmless.
+    if (item.id) {
+      const { rows: found } = await pool.query(`SELECT household_id FROM recurring_items WHERE id = $1`, [item.id]);
+      if (found[0]) {
+        if (found[0].household_id !== req.user.household_id) throw conflict('That id is already in use', 'id_taken');
+        return res.status(200).json({ item: await fetchOne(req.user, item.id) });
+      }
+    }
     normaliseDays(item);
     await validateRefs(pool, req.user, item);
     const { rows } = await pool.query(
-      `INSERT INTO recurring_items (household_id, kind, name, amount_cents, frequency, account_id, category_id, next_date, active, days_of_month)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+      `INSERT INTO recurring_items (id, household_id, kind, name, amount_cents, frequency, account_id, category_id, next_date, active, days_of_month)
+       VALUES (COALESCE($11::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [req.user.household_id, item.kind, item.name, item.amount_cents, item.frequency,
-        item.account_id, item.category_id, item.next_date, item.active, item.days_of_month],
+        item.account_id, item.category_id, item.next_date, item.active, item.days_of_month, item.id ?? null],
     );
     res.status(201).json({ item: await fetchOne(req.user, rows[0].id) });
   });

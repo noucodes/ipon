@@ -7,8 +7,8 @@ import { RequireAuth } from '../components/RequireAuth';
 import { useAuth } from '../lib/auth';
 import { Body, Button, Card, Chip, ErrorText, Field, IconButton, Label, Money, NameAmount, Segmented, Title } from '../components/ui';
 import { BigAmount } from '../components/BigAmount';
-import { useAccounts, useRecurring, useSummary, refreshMoney, api } from '../lib/queries';
-import { queryClient } from '../lib/queryClient';
+import { useAccounts, useRecurring, useSummary } from '../lib/queries';
+import { saveAccount, saveRecurring } from '../lib/outbox';
 import { loanProgress } from '../lib/loans';
 import { FREQUENCY_LABELS } from '../lib/format';
 import { useTheme, space, radius } from '../theme';
@@ -72,34 +72,34 @@ function SetupGuide() {
     if (step === 0) {
       for (const r of money) {
         if (!r.name.trim()) continue;
-        await api.post('/accounts', { name: r.name.trim(), type: r.type, opening_balance_cents: toCents(r.balance || '0') ?? 0 });
+        await saveAccount(null, { name: r.name.trim(), type: r.type, opening_balance_cents: toCents(r.balance || '0') ?? 0 });
       }
       setMoney([]);
     } else if (step === 1) {
       for (const r of cards) {
         if (!r.name.trim()) continue;
-        await api.post('/accounts', { name: r.name.trim(), type: 'credit_card', opening_balance_cents: -Math.abs(toCents(r.owed || '0') ?? 0) });
+        await saveAccount(null, { name: r.name.trim(), type: 'credit_card', opening_balance_cents: -Math.abs(toCents(r.owed || '0') ?? 0) });
       }
       setCards([]);
     } else if (step === 3) {
       for (const r of people) {
         const cents = Math.abs(toCents(r.amount || '0') ?? 0);
         if (!r.name.trim()) continue;
-        await api.post('/accounts', { name: r.name.trim(), type: 'person', opening_balance_cents: r.direction === 'i_owe' ? -cents : cents });
+        await saveAccount(null, { name: r.name.trim(), type: 'person', opening_balance_cents: r.direction === 'i_owe' ? -cents : cents });
       }
       setPeople([]);
     } else if (step === 4) {
       const pay = toCents(salary.amount || '0') ?? 0;
       if (pay > 0) {
         const day = Math.min(31, Math.max(1, Number.parseInt(salary.day, 10) || 15));
-        await api.post('/recurring', { kind: 'income', name: 'Salary', amount_cents: pay, frequency: salary.frequency, next_date: nextDateForDay(day) });
+        await saveRecurring(null, { kind: 'income', name: 'Salary', amount_cents: pay, frequency: salary.frequency, next_date: nextDateForDay(day) });
         setSalary({ amount: '', frequency: 'semi_monthly', day: '15' });
       }
       for (const r of bills) {
         const cents = toCents(r.amount || '0') ?? 0;
         if (!r.name.trim() || !cents) continue;
         const day = Math.min(31, Math.max(1, Number.parseInt(r.day, 10) || 1));
-        await api.post('/recurring', { kind: 'expense', name: r.name.trim(), amount_cents: cents, frequency: 'monthly', next_date: nextDateForDay(day) });
+        await saveRecurring(null, { kind: 'expense', name: r.name.trim(), amount_cents: cents, frequency: 'monthly', next_date: nextDateForDay(day) });
       }
       setBills([]);
     }
@@ -110,9 +110,8 @@ function SetupGuide() {
     setBusy(true);
     try {
       await saveStep();
-      await refreshMoney();
-      await queryClient.invalidateQueries({ queryKey: ['recurring'] });
-      if (step === STEPS.length - 2) await setOnboarded(true);
+      // Offline is fine: what you typed is saved on the phone and syncs later.
+      if (step === STEPS.length - 2) await setOnboarded(true).catch(() => {});
       setStep((s) => s + 1);
     } catch (err) {
       setError(err);

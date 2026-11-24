@@ -7,7 +7,8 @@ import { loanProgress } from '../../lib/loans';
 import { RequireAuth } from '../../components/RequireAuth';
 import { Body, Button, Chip, ErrorText, Field, Label, Loading, Money, ToggleRow, Card } from '../../components/ui';
 import { TransactionRow } from '../../components/TransactionRow';
-import { useAccount, useMoneyMutation, useTransactions, api } from '../../lib/queries';
+import { useAccount, useTransactions } from '../../lib/queries';
+import { deleteAccount, hasPendingTransactions, saveAccount } from '../../lib/outbox';
 import { ACCOUNT_TYPE_ICONS, ACCOUNT_TYPE_LABELS, centsToInput, formatPHP, friendlyDate } from '../../lib/format';
 import { space, useTheme } from '../../theme';
 
@@ -46,9 +47,6 @@ function AccountForm({ account }) {
   const [openingNegative, setOpeningNegative] = useState(account ? account.opening_balance_cents < 0 : false);
   const [error, setError] = useState(null);
 
-  const save = useMoneyMutation((body) => (isNew ? api.post('/accounts', body) : api.patch(`/accounts/${account.id}`, body)));
-  const archive = useMoneyMutation((archived) => api.patch(`/accounts/${account.id}`, { archived }));
-  const remove = useMoneyMutation(() => api.del(`/accounts/${account.id}`));
   const history = useTransactions({ account_id: account?.id }, { enabled: !isNew });
 
   const isCard = type === 'credit_card';
@@ -65,12 +63,9 @@ function AccountForm({ account }) {
       opening_balance_cents: signed,
       is_private: isPrivate,
     };
-    try {
-      await save.mutateAsync(body);
-      router.back();
-    } catch (err) {
-      setError(err);
-    }
+    // Saved on the phone straight away; it syncs in the background.
+    await saveAccount(account ?? null, body);
+    router.back();
   }
 
   function onDelete() {
@@ -80,12 +75,12 @@ function AccountForm({ account }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await remove.mutateAsync();
-            router.back();
-          } catch (err) {
-            setError(err);
+          if (history.data?.pages?.[0]?.transactions?.length || hasPendingTransactions(account.id)) {
+            setError({ message: 'This account has transactions. Archive it instead.' });
+            return;
           }
+          await deleteAccount(account);
+          router.back();
         },
       },
     ]);
@@ -142,7 +137,7 @@ function AccountForm({ account }) {
           )}
 
           <ErrorText error={error} />
-          <Button title={isNew ? 'Add account' : 'Save changes'} onPress={onSave} loading={save.isPending} />
+          <Button title={isNew ? 'Add account' : 'Save changes'} onPress={onSave} />
 
           {!isNew && (
             <>
@@ -150,12 +145,12 @@ function AccountForm({ account }) {
                 title={account.archived ? 'Unarchive' : 'Archive'}
                 variant="secondary"
                 icon="archive-outline"
-                loading={archive.isPending}
                 onPress={async () => {
-                  try { await archive.mutateAsync(!account.archived); router.back(); } catch (err) { setError(err); }
+                  await saveAccount(account, { archived: !account.archived });
+                  router.back();
                 }}
               />
-              <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} loading={remove.isPending} />
+              <Button title="Delete" variant="danger" icon="trash-outline" onPress={onDelete} />
             </>
           )}
         </>
